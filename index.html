@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百人一首 練習帳</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        /* ルビの調整 */
+        rt {
+            font-size: 0.6em;
+            color: #888;
+            font-weight: normal;
+            user-select: none; /* ルビを選択不可にしてコピー時の挙動を改善 */
+        }
+        /* 縦書き対応（読み札用） */
+        .writing-vertical {
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+        }
+        /* アニメーション */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .animate-pop-in {
+            animation: popIn 0.3s ease-out forwards;
+        }
+        /* フォント設定: 明朝体で見やすく */
+        .font-serif {
+            font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+        }
+        /* 解説モーダル内のスクロールバー */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f5f5f4;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #d6d3d1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-[#f7f3e8] text-stone-800 min-h-screen selection:bg-red-200">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- アイコン定義 (SVG直接定義) ---
+        const Icon = ({ name, className }) => {
+            const paths = {
+                BookOpen: <><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>,
+                RefreshCw: <><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></>,
+                Trophy: <><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></>,
+                ArrowRight: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
+                CheckCircle: <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></>,
+                XCircle: <><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></>,
+                Play: <polygon points="5 3 19 12 5 21 5 3" />,
+                Volume2: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></>,
+                VolumeX: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></>
+            };
+
+            const path = paths[name];
+            if (!path) return null;
+
+            return (
+                <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    className={className}
+                >
+                    {path}
+                </svg>
+            );
+        };
+
+        // --- 音声管理クラス ---
+        class AudioManager {
+            constructor() {
+                this.ctx = null;
+                this.isMuted = false;
+                this.isPlayingBgm = false;
+                this.bgmInterval = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playTone(freq, type, duration, vol = 0.1, time = 0) {
+                if (!this.ctx || this.isMuted) return;
+                try {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + time);
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime + time);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + time + duration);
+                    
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(this.ctx.currentTime + time);
+                    osc.stop(this.ctx.currentTime + time + duration);
+                } catch (e) {
+                    console.error("Audio error:", e);
+                }
+            }
+
+            playCorrect() {
+                this.playTone(523.25, 'sine', 0.6, 0.2, 0); // C5
+                this.playTone(659.25, 'sine', 0.6, 0.2, 0.1); // E5
+                this.playTone(1046.50, 'sine', 0.8, 0.2, 0.2); // C6
+            }
+
+            playWrong() {
+                this.playTone(150, 'sawtooth', 0.4, 0.2, 0);
+                this.playTone(100, 'sawtooth', 0.4, 0.2, 0.1);
+            }
+
+            toggleBgm(enable) {
+                if (!this.ctx) this.init();
+                if (enable && !this.isPlayingBgm) {
+                    this.isPlayingBgm = true;
+                    this.playProceduralBgm();
+                } else if (!enable) {
+                    this.isPlayingBgm = false;
+                    if (this.bgmInterval) clearTimeout(this.bgmInterval);
+                }
+            }
+
+            playProceduralBgm() {
+                if (!this.isPlayingBgm) return;
+                
+                // 平調子 (Hirajoshi scale): D, Eb, G, A, Bb
+                const scale = [293.66, 311.13, 392.00, 440.00, 466.16, 587.33]; 
+                const note = scale[Math.floor(Math.random() * scale.length)];
+                
+                if (!this.isMuted && this.ctx) {
+                    try {
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(note, this.ctx.currentTime);
+                        
+                        gain.gain.setValueAtTime(0, this.ctx.currentTime);
+                        gain.gain.linearRampToValueAtTime(0.05, this.ctx.currentTime + 0.1);
+                        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 3.0);
+                        
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        
+                        osc.start();
+                        osc.stop(this.ctx.currentTime + 3.0);
+                    } catch(e) { console.error(e); }
+                }
+
+                const nextTime = 1000 + Math.random() * 3000;
+                this.bgmInterval = setTimeout(() => this.playProceduralBgm(), nextTime);
+            }
+        }
+
+        const audioManager = new AudioManager();
+
+        // --- 全100首データ (ルビ・現代語訳付き・歴史的仮名遣い) ---
+        const ALL_POEMS = [
+            { id: 1, kami: "<ruby>秋<rt>あき</rt></ruby>の<ruby>田<rt>た</rt></ruby>の <ruby>かりほ<rt>かりほ</rt></ruby>の<ruby>庵<rt>いほ</rt></ruby>の <ruby>苫<rt>とま</rt></ruby>を<ruby>あら<rt>あら</rt></ruby>み", shimo: "わが<ruby>衣手<rt>ころもで</rt></ruby>は <ruby>露<rt>つゆ</rt></ruby>にぬれつつ", author: "<ruby>天智天皇<rt>てんじてんのう</rt></ruby>", meaning: "秋の田んぼのそばにある仮小屋は、屋根をふいた苫の編み目が粗いので、私の着物の袖は夜露で濡れていくばかりだ。" },
+            { id: 2, kami: "<ruby>春<rt>はる</rt></ruby>すぎて <ruby>夏<rt>なつ</rt></ruby><ruby>来<rt>き</rt></ruby>にけらし <ruby>白妙<rt>しろたへ</rt></ruby>の", shimo: "<ruby>衣<rt>ころも</rt></ruby>ほすてふ <ruby>天<rt>あま</rt></ruby>の<ruby>香具山<rt>かぐやま</rt></ruby>", author: "<ruby>持統天皇<rt>じとうてんのう</rt></ruby>", meaning: "いつのまにか春が過ぎて、夏がやって来たらしい。夏になると真っ白な衣を干すという天の香具山に、その衣が見えているから。" },
+            { id: 3, kami: "<ruby>あしびき<rt>あしびき</rt></ruby>の <ruby>山鳥<rt>やまどり</rt></ruby>の<ruby>尾<rt>を</rt></ruby>の <ruby>しだり尾<rt>を</rt></ruby>の", shimo: "<ruby>ながなが<rt>ながなが</rt></ruby>し<ruby>夜<rt>よ</rt></ruby>を <ruby>ひとり<rt>ひとり</rt></ruby>かも<ruby>寝<rt>ね</rt></ruby>む", author: "<ruby>柿本人麻呂<rt>かきのもとのひとまろ</rt></ruby>", meaning: "山鳥の長く垂れ下がった尾のように、この長い長い秋の夜を、私は（あなたに会えずに）ひとりで寝るのだろうか。" },
+            { id: 4, kami: "<ruby>田子<rt>たご</rt></ruby>の<ruby>浦<rt>うら</rt></ruby>に うち<ruby>出<rt>い</rt></ruby>でて<ruby>み<rt>み</rt></ruby>れば <ruby>白妙<rt>しろたへ</rt></ruby>の", shimo: "<ruby>富士<rt>ふじ</rt></ruby>の<ruby>高嶺<rt>たかね</rt></ruby>に <ruby>雪<rt>ゆき</rt></ruby>は<ruby>降<rt>ふ</rt></ruby>りつつ", author: "<ruby>山部赤人<rt>やまべのあかひと</rt></ruby>", meaning: "田子の浦に出て眺めてみると、真っ白な富士山の高い嶺に、今も雪が降り続いていることだ。" },
+            { id: 5, kami: "<ruby>奥山<rt>おくやま</rt></ruby>に <ruby>紅葉<rt>もみぢ</rt></ruby><ruby>踏<rt>ふ</rt></ruby>みわけ <ruby>鳴<rt>な</rt></ruby>く<ruby>鹿<rt>しか</rt></ruby>の", shimo: "<ruby>声<rt>こゑ</rt></ruby>きく<ruby>時<rt>とき</rt></ruby>ぞ <ruby>秋<rt>あき</rt></ruby>は<ruby>悲<rt>かな</rt></ruby>しき", author: "<ruby>猿丸大夫<rt>さるまるだゆう</rt></ruby>", meaning: "人里離れた奥山で、散り敷いた紅葉を踏み分けて鳴いている鹿の声を聞く時こそ、秋は一段と物悲しく感じられる。" },
+            { id: 6, kami: "<ruby>かささぎ<rt>かささぎ</rt></ruby>の <ruby>渡<rt>わた</rt></ruby>せる<ruby>橋<rt>はし</rt></ruby>に <ruby>置<rt>お</rt></ruby>く<ruby>霜<rt>しも</rt></ruby>の", shimo: "<ruby>白<rt>しろ</rt></ruby>きを<ruby>見<rt>み</rt></ruby>れば <ruby>夜<rt>よ</rt></ruby>ぞふけにける", author: "<ruby>中納言家持<rt>ちゅうなごんやかもち</rt></ruby>", meaning: "七夕の夜、天の川にかささぎが渡すという橋においた霜のように、さえざえと白いのを見ると、夜もずいぶん更けたのだなあ。" },
+            { id: 7, kami: "<ruby>天<rt>あま</rt></ruby>の<ruby>原<rt>はら</rt></ruby> ふりさけ<ruby>見<rt>み</rt></ruby>れば <ruby>春日<rt>かすが</rt></ruby>なる", shimo: "<ruby>三笠<rt>みかさ</rt></ruby>の<ruby>山<rt>やま</rt></ruby>に <ruby>出<rt>い</rt></ruby>でし<ruby>月<rt>つき</rt></ruby>かも", author: "<ruby>安倍仲麿<rt>あべのなかまろ</rt></ruby>", meaning: "大空をはるかに見渡してみると、月が出ている。あの月は、故郷の春日にある三笠山に出ていた月と同じ月なのだなあ。" },
+            { id: 8, kami: "わが<ruby>庵<rt>いほ</rt></ruby>は <ruby>都<rt>みやこ</rt></ruby>のたつみ しかぞ<ruby>住<rt>す</rt></ruby>む", shimo: "<ruby>世<rt>よ</rt></ruby>を<ruby>うぢ山<rt>うぢやま</rt></ruby>と <ruby>人<rt>ひと</rt></ruby>は<ruby>い<rt>い</rt></ruby>ふなり", author: "<ruby>喜撰法師<rt>きせんほうし</rt></ruby>", meaning: "私の庵は都の東南にあって、このように心穏やかに住んでいる。それなのに世間の人は、世を辛く思って逃げ込んだ「宇治山」だと言っているそうだ。" },
+            { id: 9, kami: "<ruby>花<rt>はな</rt></ruby>の<ruby>色<rt>いろ</rt></ruby>は うつりにけりな いたづらに", shimo: "わが<ruby>身<rt>み</rt></ruby><ruby>世<rt>よ</rt></ruby>にふる ながめせしまに", author: "<ruby>小野小町<rt>おののこまち</rt></ruby>", meaning: "桜の花の色は、すっかりあせてしまった。むなしく長雨が降っている間に。私の容色もすっかり衰えてしまった。世間のことにかまけて物思いにふけっている間に。" },
+            { id: 10, kami: "これやこの <ruby>行<rt>ゆ</rt></ruby>くも<ruby>帰<rt>かへ</rt></ruby>るも <ruby>別<rt>わか</rt></ruby>れては", shimo: "<ruby>知<rt>し</rt></ruby>るも<ruby>知<rt>し</rt></ruby>らぬも <ruby>逢坂<rt>あふさか</rt></ruby>の<ruby>関<rt>せき</rt></ruby>", author: "<ruby>蝉丸<rt>せみまる</rt></ruby>", meaning: "これがまあ、あの有名な逢坂の関なのだな。都から出て行く人も帰ってくる人も、知っている人も知らない人も、ここで別れてはまたここで出会うという。" },
+            { id: 11, kami: "<ruby>わたの原<rt>わたのはら</rt></ruby> <ruby>八十島<rt>やそしま</rt></ruby>かけて <ruby>漕<rt>こ</rt></ruby>ぎ<ruby>出<rt>い</rt></ruby>でぬと", shimo: "<ruby>人<rt>ひと</rt></ruby>には<ruby>告<rt>つ</rt></ruby>げよ <ruby>海人<rt>あま</rt></ruby>の<ruby>釣舟<rt>つりぶね</rt></ruby>", author: "<ruby>参議篁<rt>さんぎたかむら</rt></ruby>", meaning: "広々とした海原を、数多くの島々を目指して漕ぎ出していったと、都にいる親しい人たちに告げておくれ、漁師の釣り船よ。" },
+            { id: 12, kami: "<ruby>天<rt>あま</rt></ruby>つ<ruby>風<rt>かぜ</rt></ruby> <ruby>雲<rt>くも</rt></ruby>の<ruby>通<rt>かよ</rt></ruby>ひ<ruby>路<rt>ぢ</rt></ruby> <ruby>吹<rt>ふ</rt></ruby>きとぢよ", shimo: "<ruby>をとめ<rt>をとめ</rt></ruby>の<ruby>姿<rt>すがた</rt></ruby> しばしとどめむ", author: "<ruby>僧正遍昭<rt>そうじょうへんじょう</rt></ruby>", meaning: "空を吹く風よ、雲の中の通り道を吹き閉じてくれ。天女のような舞姫たちの美しい姿を、もう少し地上に留めておきたいから。" },
+            { id: 13, kami: "<ruby>筑波嶺<rt>つくばね</rt></ruby>の <ruby>峰<rt>みね</rt></ruby>より<ruby>落<rt>お</rt></ruby>つる <ruby>みなの川<rt>がわ</rt></ruby>", shimo: "<ruby>恋<rt>こひ</rt></ruby>ぞつもりて <ruby>淵<rt>ふち</rt></ruby>となりぬる", author: "<ruby>陽成院<rt>ようぜいいん</rt></ruby>", meaning: "筑波山の峰から流れ落ちてくるみなの川が、最初はわずかな水でもやがて深い淵となるように、私の恋心も積もり積もって、今では深い淵となってしまった。" },
+            { id: 14, kami: "<ruby>陸奥<rt>みちのく</rt></ruby>の しのぶもぢずり <ruby>誰<rt>たれ</rt></ruby>ゆゑに", shimo: "<ruby>乱<rt>みだ</rt></ruby>れそめにし われならなくに", author: "<ruby>河原左大臣<rt>かわらのさだいじん</rt></ruby>", meaning: "陸奥の「しのぶもじずり」の乱れ模様のように、私の心は乱れ始めてしまいました。いったい誰のせいでこうなったと思っているのですか。私のせいではないのですよ（あなたのせいですよ）。" },
+            { id: 15, kami: "<ruby>君<rt>きみ</rt></ruby>がため <ruby>春<rt>はる</rt></ruby>の<ruby>野<rt>の</rt></ruby>に<ruby>出<rt>い</rt></ruby>でて <ruby>若菜<rt>わかな</rt></ruby><ruby>摘<rt>つ</rt></ruby>む", shimo: "わが<ruby>衣手<rt>ころもで</rt></ruby>に <ruby>雪<rt>ゆき</rt></ruby>は<ruby>降<rt>ふ</rt></ruby>りつつ", author: "<ruby>光孝天皇<rt>こうこうてんのう</rt></ruby>", meaning: "あなたに差し上げるため、春の野原に出て若菜を摘んでいる私の袖に、雪がしきりに降りかかっています。" },
+            { id: 16, kami: "<ruby>立<rt>た</rt></ruby>ち<ruby>別<rt>わか</rt></ruby>れ <ruby>いなば<rt>いなば</rt></ruby>の<ruby>山<rt>やま</rt></ruby>の <ruby>峰<rt>みね</rt></ruby>に<ruby>生<rt>お</rt></ruby>ふる", shimo: "<ruby>まつ<rt>まつ</rt></ruby>とし<ruby>聞<rt>き</rt></ruby>かば <ruby>今<rt>いま</rt></ruby><ruby>帰<rt>かへ</rt></ruby>り<ruby>来<rt>こ</rt></ruby>む", author: "<ruby>中納言行平<rt>ちゅうなごんゆきひら</rt></ruby>", meaning: "お別れして因幡の国へ去って行っても、あの因幡山の峰に生えている松のように、あなたが私を「待つ」と聞いたなら、すぐにでも帰ってきましょう。" },
+            { id: 17, kami: "<ruby>ちはや<rt>ちはや</rt></ruby>ぶる <ruby>神代<rt>かみよ</rt></ruby>もきかず <ruby>竜田川<rt>たつたがわ</rt></ruby>", shimo: "<ruby>からくれなゐ<rt>からくれなゐ</rt></ruby>に <ruby>水<rt>みず</rt></ruby>くくるとは", author: "<ruby>在原業平朝臣<rt>ありわらのなりひらあそん</rt></ruby>", meaning: "さまざまな不思議なことがあった神代の昔でさえ聞いたことがない。竜田川が（一面に散った紅葉で）鮮やかな紅色に水をくくり染めにするなんてことは。" },
+            { id: 18, kami: "<ruby>住<rt>す</rt></ruby>の<ruby>江<rt>え</rt></ruby>の <ruby>岸<rt>きし</rt></ruby>に<ruby>寄<rt>よ</rt></ruby>る<ruby>波<rt>なみ</rt></ruby> <ruby>よる<rt>よる</rt></ruby>さへや", shimo: "<ruby>夢<rt>ゆめ</rt></ruby>の<ruby>通<rt>かよ</rt></ruby>ひ<ruby>路<rt>ぢ</rt></ruby> <ruby>人目<rt>ひとめ</rt></ruby>よくらむ", author: "<ruby>藤原敏行朝臣<rt>ふじわらのとしゆきあそん</rt></ruby>", meaning: "住の江の岸に打ち寄せる波ではないが、どうして夜の夢の中でさえ、あなたは人目を避けて会ってくれないのだろうか。" },
+            { id: 19, kami: "<ruby>難波潟<rt>なにはがた</rt></ruby> <ruby>短<rt>みじか</rt></ruby>き<ruby>葦<rt>あし</rt></ruby>の ふしの<ruby>間<rt>ま</rt></ruby>も", shimo: "<ruby>あ<rt>あ</rt></ruby>はでこの<ruby>世<rt>よ</rt></ruby>を <ruby>すぐ<rt>すぐ</rt></ruby>してよとや", author: "<ruby>伊勢<rt>いせ</rt></ruby>", meaning: "難波潟に生えている葦の、その短い節と節の間のような、ほんのわずかな時間でさえ、あなたに会わずに一生を終えろととおっしゃるのですか。" },
+            { id: 20, kami: "わびぬれば <ruby>今<rt>いま</rt></ruby>はた<ruby>同<rt>おな</rt></ruby>じ <ruby>難波<rt>なには</rt></ruby>なる", shimo: "みをつくしても <ruby>逢<rt>あ</rt></ruby>はむとぞ<ruby>思<rt>おも</rt></ruby>ふ", author: "<ruby>元良親王<rt>もとよししんのう</rt></ruby>", meaning: "これほど思い悩んでしまったのですから、今はもう身を滅ぼしても同じことです。難波にある澪標（みおつくし）のように、我が身を尽くしてでもあなたに会いたいと思います。" },
+            { id: 21, kami: "<ruby>今<rt>いま</rt></ruby><ruby>来<rt>こ</rt></ruby>むと <ruby>い<rt>い</rt></ruby>ひしばかりに <ruby>長月<rt>ながつき</rt></ruby>の", shimo: "<ruby>有明<rt>ありあけ</rt></ruby>の<ruby>月<rt>つき</rt></ruby>を <ruby>待<rt>ま</rt></ruby>ち<ruby>出<rt>い</rt></ruby>でつるかな", author: "<ruby>素性法師<rt>そせいほうし</rt></ruby>", meaning: "「すぐに行きましょう」とあなたが言ったばかりに、（その言葉を信じて待っているうちに）とうとう九月の夜長を待ち明かし、有明の月が出るまでになってしまいました。" },
+            { id: 22, kami: "<ruby>吹<rt>ふ</rt></ruby>くからに <ruby>秋<rt>あき</rt></ruby>の<ruby>草木<rt>くさき</rt></ruby>の しをるれば", shimo: "むべ<ruby>山風<rt>やまかぜ</rt></ruby>を <ruby>嵐<rt>あらし</rt></ruby>といふらむ", author: "<ruby>文屋康秀<rt>ふんやのやすひで</rt></ruby>", meaning: "吹きつけるとすぐに秋の草木がしおれてしまうので、なるほど、だから山から吹く風を「嵐（荒らし）」と言うのだろうなあ。" },
+            { id: 23, kami: "<ruby>月<rt>つき</rt></ruby><ruby>見<rt>み</rt></ruby>れば ちぢにものこそ <ruby>悲<rt>かな</rt></ruby>しけれ", shimo: "わが<ruby>身<rt>み</rt></ruby>ひとつの <ruby>秋<rt>あき</rt></ruby>にはあらねど", author: "<ruby>大江千里<rt>おおえのちさと</rt></ruby>", meaning: "月を見ていると、あれこれと限りなく物悲しくなってくる。私一人だけに訪れた秋ではないのだけれど。" },
+            { id: 24, kami: "このたびは <ruby>幣<rt>ぬさ</rt></ruby>もとりあへず <ruby>手向山<rt>たむけやま</rt></ruby>", shimo: "<ruby>紅葉<rt>もみぢ</rt></ruby>の<ruby>錦<rt>にしき</rt></ruby> <ruby>神<rt>かみ</rt></ruby>のまにまに", author: "<ruby>菅家<rt>かんけ</rt></ruby>", meaning: "今度の旅は急なことでしたので、捧げる幣（ぬさ）の用意もできませんでした。とりあえずこの手向山の美しい紅葉を捧げますので、神の御心のままにお受け取りください。" },
+            { id: 25, kami: "<ruby>名<rt>な</rt></ruby>にし<ruby>負<rt>お</rt></ruby>はば <ruby>逢坂山<rt>あふさかやま</rt></ruby>の さねかづら", shimo: "<ruby>人<rt>ひと</rt></ruby>に<ruby>知<rt>し</rt></ruby>られで くるよしもがな", author: "<ruby>三条右大臣<rt>さんじょううだいじん</rt></ruby>", meaning: "「逢う」という名を持つ逢坂山の、その名にちなむ「さねかづら」を手繰り寄せるように、誰にも知られないであなたのもとへ通う方法があればいいのに。" },
+            { id: 26, kami: "<ruby>小倉山<rt>をぐらやま</rt></ruby> <ruby>峰<rt>みね</rt></ruby>の<ruby>紅葉葉<rt>もみぢば</rt></ruby> <ruby>心<rt>こころ</rt></ruby>あらば", shimo: "<ruby>今<rt>いま</rt></ruby>ひとたびの <ruby>行幸<rt>みゆき</rt></ruby><ruby>待<rt>ま</rt></ruby>たなむ", author: "<ruby>貞信公<rt>ていしんこう</rt></ruby>", meaning: "小倉山の峰の紅葉よ、もしお前に心があるならば、もう一度天皇のお出ましがあるまで、散らずに待っていておくれ。" },
+            { id: 27, kami: "<ruby>みかの原<rt>はら</rt></ruby> わきて<ruby>流<rt>なが</rt></ruby>るる <ruby>泉川<rt>いづみがわ</rt></ruby>", shimo: "いつ<ruby>見<rt>み</rt></ruby>きとてか <ruby>恋<rt>こひ</rt></ruby>しかるらむ", author: "<ruby>中納言兼輔<rt>ちゅうなごんかねすけ</rt></ruby>", meaning: "みかの原を湧き出て流れるいづみ川ではないが、いつあなたを見たというので、こんなに恋しいのだろうか。（まだ一度もお会いしていないのに。）" },
+            { id: 28, kami: "<ruby>山里<rt>やまざと</rt></ruby>は <ruby>冬<rt>ふゆ</rt></ruby>ぞさびしさまさりける", shimo: "<ruby>人目<rt>ひとめ</rt></ruby>も<ruby>草<rt>くさ</rt></ruby>も かれぬと<ruby>思<rt>おも</rt></ruby>へば", author: "<ruby>源宗于朝臣<rt>みなもとのむねゆきあそん</rt></ruby>", meaning: "山里は、冬こそ寂しさがまさるものだ。人の訪れも途絶え、草も枯れてしまうと思うと。" },
+            { id: 29, kami: "<ruby>心<rt>こころ</rt></ruby>あてに <ruby>折<rt>お</rt></ruby>らばや<ruby>折<rt>お</rt></ruby>らむ <ruby>初霜<rt>はつしも</rt></ruby>の", shimo: "<ruby>置<rt>お</rt></ruby>きまどはせる <ruby>白菊<rt>しらぎく</rt></ruby>の<ruby>花<rt>はな</rt></ruby>", author: "<ruby>凡河内躬恒<rt>おおしこうちのみつね</rt></ruby>", meaning: "あて推量で折るならば折ってみようか。真っ白な初霜が降りて、どれが霜でどれが花か見分けがつかなくなっている白菊の花を。" },
+            { id: 30, kami: "<ruby>有明<rt>ありあけ</rt></ruby>の つれなく<ruby>見<rt>み</rt></ruby>えし <ruby>別<rt>わか</rt></ruby>れより", shimo: "<ruby>暁<rt>あかつき</rt></ruby>ばかり <ruby>憂<rt>う</rt></ruby>きものはなし", author: "<ruby>壬生忠岑<rt>みぶのただみね</rt></ruby>", meaning: "有明の月が素っ気なく空に残っているのを見た、あのつらい別れのとき以来、夜明けほどつらく悲しいものはない。" },
+            { id: 31, kami: "<ruby>朝<rt>あさ</rt></ruby>ぼらけ <ruby>有明<rt>ありあけ</rt></ruby>の<ruby>月<rt>つき</rt></ruby>と <ruby>見<rt>み</rt></ruby>るまでに", shimo: "<ruby>吉野<rt>よしの</rt></ruby>の<ruby>里<rt>さと</rt></ruby>に <ruby>降<rt>ふ</rt></ruby>れる<ruby>白雪<rt>しらゆき</rt></ruby>", author: "<ruby>坂上是則<rt>さかのうえのこれのり</rt></ruby>", meaning: "夜がほのぼのと明けるころ、空に残っている有明の月かと思うほどに明るく、吉野の里に降り積もっている白雪よ。" },
+            { id: 32, kami: "<ruby>山川<rt>やまがわ</rt></ruby>に <ruby>風<rt>かぜ</rt></ruby>のかけたる しがらみは", shimo: "<ruby>流<rt>なが</rt></ruby>れもあへぬ <ruby>紅葉<rt>もみぢ</rt></ruby>なりけり", author: "<ruby>春道列樹<rt>はるみちのつらき</rt></ruby>", meaning: "山の中を流れる川に、風が架け渡したしがらみ（柵）とは、流れるに流れきれずにたまっている紅葉であったのだなあ。" },
+            { id: 33, kami: "ひさかたの <ruby>光<rt>ひかり</rt></ruby>のどけき <ruby>春<rt>はる</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>に", shimo: "しづ<ruby>心<rt>こころ</rt></ruby>なく <ruby>花<rt>はな</rt></ruby>の<ruby>散<rt>ち</rt></ruby>るらむ", author: "<ruby>紀友則<rt>きのとものり</rt></ruby>", meaning: "日の光がこんなにものどかな春の日に、どうして桜の花だけは落ち着いた心もなく、あわただしく散っていくのだろうか。" },
+            { id: 34, kami: "<ruby>誰<rt>たれ</rt></ruby>をかも <ruby>知<rt>し</rt></ruby>る<ruby>人<rt>ひと</rt></ruby>にせむ <ruby>高砂<rt>たかさご</rt></ruby>の", shimo: "<ruby>松<rt>まつ</rt></ruby>も<ruby>昔<rt>むかし</rt></ruby>の <ruby>友<rt>とも</rt></ruby>ならなくに", author: "<ruby>藤原興風<rt>ふじわらのおきかぜ</rt></ruby>", meaning: "（年老いてしまった今）私は誰を友人としたらよいのだろうか。長寿で知られる高砂の松でさえ、昔からの友人ではないのだから。" },
+            { id: 35, kami: "<ruby>人<rt>ひと</rt></ruby>はいさ <ruby>心<rt>こころ</rt></ruby>も<ruby>知<rt>し</rt></ruby>らず ふるさとは", shimo: "<ruby>花<rt>はな</rt></ruby>ぞ<ruby>昔<rt>むかし</rt></ruby>の <ruby>香<rt>か</rt></ruby>に<ruby>にほ<rt>にほ</rt></ruby>ひける", author: "<ruby>紀貫之<rt>きのつらゆき</rt></ruby>", meaning: "人の心は、さあどうだか分からないけれど、馴染み深いこの土地の梅の花だけは、昔と変わらない香りで咲いていることだ。" },
+            { id: 36, kami: "<ruby>夏<rt>なつ</rt></ruby>の<ruby>夜<rt>よ</rt></ruby>は まだ<ruby>宵<rt>よひ</rt></ruby>ながら <ruby>明<rt>あ</rt></ruby>けぬるを", shimo: "<ruby>雲<rt>くも</rt></ruby>のいづこに <ruby>月<rt>つき</rt></ruby><ruby>宿<rt>やど</rt></ruby>るらむ", author: "<ruby>清原深養父<rt>きよはらのふかやぶ</rt></ruby>", meaning: "夏の夜は、まだ宵のうちだと思っている間に明けてしまったが、いったい雲のどこに月は宿をとっている（隠れている）のだろうか。" },
+            { id: 37, kami: "<ruby>白露<rt>しらつゆ</rt></ruby>に <ruby>風<rt>かぜ</rt></ruby>の<ruby>吹<rt>ふ</rt></ruby>きしく <ruby>秋<rt>あき</rt></ruby>の<ruby>野<rt>の</rt></ruby>は", shimo: "つらぬきとめぬ <ruby>玉<rt>たま</rt></ruby>ぞ<ruby>散<rt>ち</rt></ruby>りける", author: "<ruby>文屋朝康<rt>ふんやのあさやす</rt></ruby>", meaning: "草葉の上の白露に風が吹きつけている秋の野は、まるで紐に通して留めていない真珠の玉が散り乱れているようだ。" },
+            { id: 38, kami: "<ruby>忘<rt>わす</rt></ruby>らるる <ruby>身<rt>み</rt></ruby>をば<ruby>思<rt>おも</rt></ruby>はず <ruby>誓<rt>ちか</rt></ruby>ひてし", shimo: "<ruby>人<rt>ひと</rt></ruby>の<ruby>命<rt>いのち</rt></ruby>の <ruby>惜<rt>を</rt></ruby>しくもあるかな", author: "<ruby>右近<rt>うこん</rt></ruby>", meaning: "あなたから忘れ去られる私の身のことは何とも思いません。ただ、神に愛を誓ったあなたの命が、（神罰で失われるのではないかと）惜しまれてなりません。" },
+            { id: 39, kami: "<ruby>浅茅<rt>あさぢ</rt></ruby><ruby>生<rt>ふ</rt></ruby>の <ruby>小野<rt>をの</rt></ruby>の<ruby>篠原<rt>しのはら</rt></ruby> しのぶれど", shimo: "あまりてなどか <ruby>人<rt>ひと</rt></ruby>の<ruby>恋<rt>こひ</rt></ruby>しき", author: "<ruby>参議等<rt>さんぎひとし</rt></ruby>", meaning: "浅茅が生えている小野の篠原ではないが、いくら忍んでこらえても、どうしてこれほどまでにあなたが恋しいのでしょうか。" },
+            { id: 40, kami: "しのぶれど <ruby>色<rt>いろ</rt></ruby>に<ruby>出<rt>い</rt></ruby>でにけり わが<ruby>恋<rt>こひ</rt></ruby>は", shimo: "ものや<ruby>思<rt>おも</rt></ruby>ふと <ruby>人<rt>ひと</rt></ruby>の<ruby>問<rt>と</rt></ruby>ふまで", author: "<ruby>平兼盛<rt>たいらのかねもり</rt></ruby>", meaning: "心に秘めてきたけれど、顔色や表情に出てしまっていたようだ、私の恋は。「何か物思いをしているのですか」と人が尋ねるほどに。" },
+            { id: 41, kami: "<ruby>恋<rt>こひ</rt></ruby>すてふ わが<ruby>名<rt>な</rt></ruby>はまだき <ruby>立<rt>た</rt></ruby>ちにけり", shimo: "<ruby>人<rt>ひと</rt></ruby><ruby>知<rt>し</rt></ruby>れずこそ <ruby>思<rt>おも</rt></ruby>ひそめしか", author: "<ruby>壬生忠見<rt>みぶのただみ</rt></ruby>", meaning: "私が恋をしているという噂が、もう早くも立ってしまったなあ。誰にも知られないように、密かに思い始めたばかりなのに。" },
+            { id: 42, kami: "<ruby>契<rt>ちぎ</rt></ruby>りきな かたみに<ruby>袖<rt>そで</rt></ruby>を しぼりつつ", shimo: "<ruby>末<rt>すえ</rt></ruby>の<ruby>松山<rt>まつやま</rt></ruby> <ruby>波<rt>なみ</rt></ruby><ruby>越<rt>こ</rt></ruby>さじとは", author: "<ruby>清原元輔<rt>きよはらのもとすけ</rt></ruby>", meaning: "約束しましたよね。互いに涙に濡れた袖を絞りながら。あの末の松山を波が決して越えないように、二人の仲も決して変わらないと。" },
+            { id: 43, kami: "<ruby>逢<rt>あ</rt></ruby>ひ<ruby>見<rt>み</rt></ruby>ての のちの<ruby>心<rt>こころ</rt></ruby>に くらぶれば", shimo: "<ruby>昔<rt>むかし</rt></ruby>はものを <ruby>思<rt>おも</rt></ruby>はざりけり", author: "<ruby>権中納言敦忠<rt>ごんちゅうなごんあつただ</rt></ruby>", meaning: "あなたと結ばれてからの（恋しい）気持ちに比べれば、会いたいと思っていた昔の物思いなど、何も物思いをしていないのと同じだったのだなあ。" },
+            { id: 44, kami: "<ruby>逢<rt>あ</rt></ruby>ふことの <ruby>絶<rt>た</rt></ruby>えてしなくは なかなかに", shimo: "<ruby>人<rt>ひと</rt></ruby>をも<ruby>身<rt>み</rt></ruby>をも <ruby>恨<rt>うら</rt></ruby>みざらまし", author: "<ruby>中納言朝忠<rt>ちゅうなごんあさただ</rt></ruby>", meaning: "もしあなたと会うことが絶対にないのなら、かえってあの人のつれなさも、我が身の不運も恨むことはないでしょうに。" },
+            { id: 45, kami: "あはれとも <ruby>い<rt>い</rt></ruby>ふべき<ruby>人<rt>ひと</rt></ruby>は <ruby>思<rt>おも</rt></ruby>ほえで", shimo: "<ruby>身<rt>み</rt></ruby>のいたづらに なりぬべきかな", author: "<ruby>謙徳公<rt>けんとくこう</rt></ruby>", meaning: "私のことを「可哀想だ」と言ってくれそうな人も思い当たらず、私はきっとこのまま、むなしく死んでいくのだろうなあ。" },
+            { id: 46, kami: "<ruby>由良<rt>ゆら</rt></ruby>の<ruby>門<rt>と</rt></ruby>を <ruby>渡<rt>わた</rt></ruby>る<ruby>舟人<rt>ふなびと</rt></ruby> <ruby>かぢ<rt>かぢ</rt></ruby>を<ruby>絶<rt>た</rt></ruby>え", shimo: "<ruby>ゆくへ<rt>ゆくへ</rt></ruby>も<ruby>知<rt>し</rt></ruby>らぬ <ruby>恋<rt>こひ</rt></ruby>の<ruby>道<rt>みち</rt></ruby>かな", author: "<ruby>曾禰好忠<rt>そねのよしただ</rt></ruby>", meaning: "由良川の河口を渡る船頭が、櫂（かい）をなくして行方が分からなくなるように、これからどうなるのか行方の分からない私の恋の道であることよ。" },
+            { id: 47, kami: "<ruby>八重<rt>やへ</rt></ruby>むぐら しげれる<ruby>宿<rt>やど</rt></ruby>の さびしきに", shimo: "<ruby>人<rt>ひと</rt></ruby>こそ<ruby>見<rt>み</rt></ruby>えね <ruby>秋<rt>あき</rt></ruby>は<ruby>来<rt>き</rt></ruby>にけり", author: "<ruby>恵慶法師<rt>えぎょうほうし</rt></ruby>", meaning: "つる草が何重にも生い茂っている荒れ果てた家の寂しい庭に、訪れる人は誰もいないが、秋だけはやって来ているのだなあ。" },
+            { id: 48, kami: "<ruby>風<rt>かぜ</rt></ruby>をいたみ <ruby>岩<rt>いわ</rt></ruby>うつ<ruby>波<rt>なみ</rt></ruby>の おのれのみ", shimo: "<ruby>砕<rt>くだ</rt></ruby>けてものを <ruby>思<rt>おも</rt></ruby>ふころかな", author: "<ruby>源重之<rt>みなもとのしげゆき</rt></ruby>", meaning: "風が激しいので岩に打ち当たる波が、自分だけ砕け散るように、私だけが心を砕いて物思いにふけっている今日この頃である。" },
+            { id: 49, kami: "<ruby>御垣守<rt>みかきもり</rt></ruby> <ruby>衛士<rt>ゑじ</rt></ruby>のたく<ruby>火<rt>ひ</rt></ruby>の <ruby>夜<rt>よる</rt></ruby>は<ruby>燃<rt>も</rt></ruby>え", shimo: "<ruby>昼<rt>ひる</rt></ruby>は<ruby>消<rt>き</rt></ruby>えつつ ものをこそ<ruby>思<rt>おも</rt></ruby>へ", author: "<ruby>大中臣能宣朝臣<rt>おおなかとみのよしのぶあそん</rt></ruby>", meaning: "宮中の門を守る衛士が焚くかがり火が、夜は燃え、昼は消えているように、私の恋心も夜は燃え上がり、昼は消え入りそうに物思いに悩んでいます。" },
+            { id: 50, kami: "<ruby>君<rt>きみ</rt></ruby>がため <ruby>惜<rt>を</rt></ruby>しからざりし <ruby>命<rt>いのち</rt></ruby>さへ", shimo: "<ruby>長<rt>なが</rt></ruby>くもがなと <ruby>思<rt>おも</rt></ruby>ひけるかな", author: "<ruby>藤原義孝<rt>ふじわらのよしたか</rt></ruby>", meaning: "あなたのためなら捨てても惜しくないと思っていた私の命ですが、（あなたと結ばれた今となっては）いつまでも長くあってほしいと思うようになりました。" },
+            { id: 51, kami: "かくとだに えやは<ruby>伊吹<rt>いぶき</rt></ruby>の さしも<ruby>草<rt>ぐさ</rt></ruby>", shimo: "さしも<ruby>知<rt>し</rt></ruby>らじな <ruby>燃<rt>も</rt></ruby>ゆる<ruby>思<rt>おも</rt></ruby>ひを", author: "<ruby>藤原実方朝臣<rt>ふじわらのさねかたあそん</rt></ruby>", meaning: "これほどあなたを思っているとさえ言えません。（伊吹山のさしも草ではないが）それほどまでに燃える私の思いを、あなたはご存じないでしょうね。" },
+            { id: 52, kami: "<ruby>明<rt>あ</rt></ruby>けぬれば <ruby>暮<rt>く</rt></ruby>るるものとは <ruby>知<rt>し</rt></ruby>りながら", shimo: "なほ<ruby>恨<rt>うら</rt></ruby>めしき <ruby>朝<rt>あさ</rt></ruby>ぼらけかな", author: "<ruby>藤原道信朝臣<rt>ふじわらのみちのぶあそん</rt></ruby>", meaning: "夜が明ければ、やがてまた日が暮れて（あなたに会える）ということは分かっているのですが、それでもやはり（あなたと別れなければならない）夜明けは恨めしいものです。" },
+            { id: 53, kami: "<ruby>嘆<rt>なげ</rt></ruby>きつつ <ruby>ひとり<rt>ひとり</rt></ruby><ruby>寝<rt>ね</rt></ruby>る<ruby>夜<rt>よ</rt></ruby>の <ruby>明<rt>あ</rt></ruby>くる<ruby>間<rt>ま</rt></ruby>は", shimo: "いかに<ruby>久<rt>ひさ</rt></ruby>しき ものとかは<ruby>知<rt>し</rt></ruby>る", author: "<ruby>右大将道綱母<rt>うだいしょうみちつなのはは</rt></ruby>", meaning: "（あなたの訪れがないのを）嘆きながらひとりで寝る夜が明けるまでの時間が、どれほど長いものか、あなたはご存じでしょうか（ご存じないでしょう）。" },
+            { id: 54, kami: "<ruby>忘<rt>わす</rt></ruby>れじの <ruby>行<rt>ゆ</rt></ruby>く<ruby>末<rt>すえ</rt></ruby>までは かたければ", shimo: "<ruby>今日<rt>けふ</rt></ruby>を<ruby>限<rt>かぎ</rt></ruby>りの <ruby>命<rt>いのち</rt></ruby>ともがな", author: "<ruby>儀同三司母<rt>ぎどうさんしのはは</rt></ruby>", meaning: "「いつまでも忘れない」というあなたの言葉が、将来ずっと変わらないということは難しいでしょうから、その言葉を聞いた今日を最後とする私の命であってほしいものです。" },
+            { id: 55, kami: "<ruby>滝<rt>たき</rt></ruby>の<ruby>音<rt>おと</rt></ruby>は <ruby>絶<rt>た</rt></ruby>えて<ruby>久<rt>ひさ</rt></ruby>しく なりぬれど", shimo: "<ruby>名<rt>な</rt></ruby>こそ<ruby>流<rt>なが</rt></ruby>れて なほ<ruby>聞<rt>き</rt></ruby>こえけれ", author: "<ruby>大納言公任<rt>だいなごんきんとう</rt></ruby>", meaning: "（大覚寺の）滝の水音は聞こえなくなってから長い年月が経ってしまったが、その名声だけは流れ伝わって、今でも人々の口から聞こえていることだ。" },
+            { id: 56, kami: "あらざらむ この<ruby>世<rt>よ</rt></ruby>のほかの <ruby>思<rt>おも</rt></ruby>ひ<ruby>出<rt>で</rt></ruby>に", shimo: "<ruby>今<rt>いま</rt></ruby>ひとたびの <ruby>逢<rt>あ</rt></ruby>ふこともがな", author: "<ruby>和泉式部<rt>いずみしきぶ</rt></ruby>", meaning: "私はもうすぐ死んでしまうでしょう。あの世への思い出として、せめてもう一度だけ、あなたにお会いしたいものです。" },
+            { id: 57, kami: "めぐり<ruby>逢<rt>あ</rt></ruby>ひて <ruby>見<rt>み</rt></ruby>しやそれとも わかぬ<ruby>間<rt>ま</rt></ruby>に", shimo: "<ruby>雲<rt>くも</rt></ruby><ruby>隠<rt>がく</rt></ruby>れにし <ruby>夜半<rt>よは</rt></ruby>の<ruby>月<rt>つき</rt></ruby>かな", author: "<ruby>紫式部<rt>むらさきしきぶ</rt></ruby>", meaning: "久しぶりにめぐり逢って、その姿を見たのがあなたかどうかも見分けがつかないほどのわずかな間に、雲に隠れてしまった夜中の月のように、あなたはあわただしく帰ってしまわれたのですね。" },
+            { id: 58, kami: "<ruby>有馬山<rt>ありまやま</rt></ruby> <ruby>猪名<rt>ゐな</rt></ruby>の<ruby>笹原<rt>ささはら</rt></ruby> <ruby>風<rt>かぜ</rt></ruby><ruby>吹<rt>ふ</rt></ruby>けば", shimo: "いでそよ<ruby>人<rt>ひと</rt></ruby>を <ruby>忘<rt>わす</rt></ruby>れやはする", author: "<ruby>大弐三位<rt>だいにのさんみ</rt></ruby>", meaning: "有馬山に近い猪名の笹原に風が吹くと、そよそよと音がします。そう、その音のように、どうして私があなたを忘れたりするものでしょうか。" },
+            { id: 59, kami: "やすらはで <ruby>寝<rt>ね</rt></ruby>なましものを <ruby>小夜<rt>さよ</rt></ruby>ふけて", shimo: "かたぶくまでの <ruby>月<rt>つき</rt></ruby>を<ruby>見<rt>み</rt></ruby>しかな", author: "<ruby>赤染衛門<rt>あかぞめえもん</rt></ruby>", meaning: "（あなたが来ないと知っていたら）ためらわずに寝てしまったでしょうに。あなたが来るのを待っているうちに夜が更けて、西の山に沈もうとする月を見てしまいました。" },
+            { id: 60, kami: "<ruby>大江山<rt>おほえやま</rt></ruby> いく<ruby>野<rt>の</rt></ruby>の<ruby>道<rt>みち</rt></ruby>の <ruby>遠<rt>とほ</rt></ruby>ければ", shimo: "まだふみも<ruby>見<rt>み</rt></ruby>ず <ruby>天<rt>あま</rt></ruby>の<ruby>橋立<rt>はしだて</rt></ruby>", author: "<ruby>小式部内侍<rt>こしきぶのないし</rt></ruby>", meaning: "大江山を越えて生野を通って行く道は遠いので、（母がいる）天の橋立の地はまだ踏んでみたこともありませんし、母からの手紙もまだ見ておりません。" },
+            { id: 61, kami: "いにしへの <ruby>奈良<rt>なら</rt></ruby>の<ruby>都<rt>みやこ</rt></ruby>の <ruby>八重桜<rt>やへざくら</rt></ruby>", shimo: "<ruby>けふ<rt>けふ</rt></ruby><ruby>九重<rt>ここのへ</rt></ruby>に <ruby>にほ<rt>にほ</rt></ruby>ひぬるかな", author: "<ruby>伊勢大輔<rt>いせのたいふ</rt></ruby>", meaning: "いにしえの奈良の都で咲いていた八重桜が、今日はこの宮中で、美しく咲き誇っていることですよ。" },
+            { id: 62, kami: "<ruby>夜<rt>よ</rt></ruby>をこめて <ruby>鳥<rt>とり</rt></ruby>の<ruby>空音<rt>そらね</rt></ruby>は はかるとも", shimo: "<ruby>よ<rt>よ</rt></ruby>に<ruby>逢坂<rt>あふさか</rt></ruby>の <ruby>関<rt>せき</rt></ruby>は<ruby>許<rt>ゆる</rt></ruby>さじ", author: "<ruby>清少納言<rt>せいしょうなごん</rt></ruby>", meaning: "夜がまだ明けないうちに、鶏の鳴き真似をして（関守をだまして通ろうと）たくらんでも、この逢坂の関は決して通しませんよ。（私は決してあなたに会いませんよ。）" },
+            { id: 63, kami: "<ruby>今<rt>いま</rt></ruby>はただ <ruby>思<rt>おも</rt></ruby>ひ<ruby>絶<rt>た</rt></ruby>えなむ とばかりを", shimo: "<ruby>人<rt>ひと</rt></ruby>づてならで <ruby>い<rt>い</rt></ruby>ふよしもがな", author: "<ruby>左京大夫道雅<rt>さきょうのだいぶみちまさ</rt></ruby>", meaning: "今はもう、あなたのことをきっぱり諦めてしまおう。そのことだけを、人づてではなく、直接あなたに言う方法があればいいのになあ。" },
+            { id: 64, kami: "<ruby>朝<rt>あさ</rt></ruby>ぼらけ <ruby>宇治<rt>うじ</rt></ruby>の<ruby>川霧<rt>かわぎり</rt></ruby> たえだえに", shimo: "あらはれわたる <ruby>瀬々<rt>せぜ</rt></ruby>の<ruby>網代木<rt>あじろぎ</rt></ruby>", author: "<ruby>権中納言定頼<rt>ごんちゅうなごんさだより</rt></ruby>", meaning: "夜が明けるころ、宇治川に立ちこめる川霧が切れ切れになって、その間から川瀬に立てられた網代木（あじろぎ）が次々と現れてくる景色であることよ。" },
+            { id: 65, kami: "<ruby>恨<rt>うら</rt></ruby>みわび ほさぬ<ruby>袖<rt>そで</rt></ruby>だに あるものを", shimo: "<ruby>恋<rt>こひ</rt></ruby>に<ruby>朽<rt>く</rt></ruby>ちなむ <ruby>名<rt>な</rt></ruby>こそ<ruby>惜<rt>を</rt></ruby>しけれ", author: "<ruby>相模<rt>さがみ</rt></ruby>", meaning: "あなたを恨み、悲嘆に暮れて、涙で乾く暇もない袖さえ腐ってしまいそうなのに、その上、私の恋の悪い噂が立って、私の名まで朽ちてしまうのが惜しまれてなりません。" },
+            { id: 66, kami: "もろともに あはれと<ruby>思<rt>おも</rt></ruby>へ <ruby>山桜<rt>やまざくら</rt></ruby>", shimo: "<ruby>花<rt>はな</rt></ruby>よりほかに <ruby>知<rt>し</rt></ruby>る<ruby>人<rt>ひと</rt></ruby>もなし", author: "<ruby>大僧正行尊<rt>だいそうじょうぎょうそん</rt></ruby>", meaning: "私がお前を愛しく思うように、お前も私を愛しいと思っておくれ、山桜よ。この山奥では、桜の花であるお前のほかに、私の心を知ってくれる人は誰もいないのだから。" },
+            { id: 67, kami: "<ruby>春<rt>はる</rt></ruby>の<ruby>夜<rt>よ</rt></ruby>の <ruby>夢<rt>ゆめ</rt></ruby>ばかりなる <ruby>手枕<rt>たまくら</rt></ruby>に", shimo: "かひなく<ruby>立<rt>た</rt></ruby>たむ <ruby>名<rt>な</rt></ruby>こそ<ruby>惜<rt>を</rt></ruby>しけれ", author: "<ruby>周防内侍<rt>すおうのないし</rt></ruby>", meaning: "春の夜の夢のようにはかない、あなたの手枕になど身を任せて、つまらない噂が立つとしたら、それが残念でなりません。" },
+            { id: 68, kami: "<ruby>心<rt>こころ</rt></ruby>にも あらで<ruby>憂<rt>う</rt></ruby>き<ruby>世<rt>よ</rt></ruby>に ながらへば", shimo: "<ruby>恋<rt>こひ</rt></ruby>しかるべき <ruby>夜半<rt>よは</rt></ruby>の<ruby>月<rt>つき</rt></ruby>かな", author: "<ruby>三条院<rt>さんじょういん</rt></ruby>", meaning: "心ならずも、このつらい世の中に生き長らえていたならば、今この美しい夜中の月を、きっと恋しく思い出すことであろう。" },
+            { id: 69, kami: "<ruby>嵐<rt>あらし</rt></ruby><ruby>吹<rt>ふ</rt></ruby>く <ruby>三室<rt>みむろ</rt></ruby>の<ruby>山<rt>やま</rt></ruby>の <ruby>紅葉葉<rt>もみぢば</rt></ruby>は", shimo: "<ruby>竜田<rt>たつた</rt></ruby>の<ruby>川<rt>かわ</rt></ruby>の <ruby>錦<rt>にしき</rt></ruby>なりけり", author: "<ruby>能因法師<rt>のういんほうし</rt></ruby>", meaning: "山風が吹き荒れる三室山の紅葉が散って、竜田川の水面に流れ、まるで錦のような美しさであることよ。" },
+            { id: 70, kami: "さびしさに <ruby>宿<rt>やど</rt></ruby>を<ruby>立<rt>た</rt></ruby>ち<ruby>出<rt>い</rt></ruby>でて <ruby>眺<rt>なが</rt></ruby>むれば", shimo: "いづこも<ruby>同<rt>おな</rt></ruby>じ <ruby>秋<rt>あき</rt></ruby>の<ruby>夕暮<rt>ゆふぐ</rt></ruby>れ", author: "<ruby>良暹法師<rt>りょうぜんほうし</rt></ruby>", meaning: "寂しさに耐えかねて、家を出てあたりを見渡してみると、どこも同じように寂しい秋の夕暮れであることよ。" },
+            { id: 71, kami: "<ruby>夕<rt>ゆふ</rt></ruby>されば <ruby>門田<rt>かどた</rt></ruby>の<ruby>稲葉<rt>いなば</rt></ruby> おとづれて", shimo: "<ruby>芦<rt>あし</rt></ruby>のまろ<ruby>屋<rt>や</rt></ruby>に <ruby>秋風<rt>あきかぜ</rt></ruby>ぞ<ruby>吹<rt>ふ</rt></ruby>く", author: "<ruby>大納言経信<rt>だいなごんつねのぶ</rt></ruby>", meaning: "夕方になると、家の前の田んぼの稲葉を音を立てて揺らし、この粗末な家に秋風が吹き渡ってくることだ。" },
+            { id: 72, kami: "<ruby>音<rt>おと</rt></ruby>にきく <ruby>高師<rt>たかし</rt></ruby>の<ruby>浜<rt>はま</rt></ruby>の あだ<ruby>波<rt>なみ</rt></ruby>は", shimo: "かけじや<ruby>袖<rt>そで</rt></ruby>の ぬれもこそすれ", author: "<ruby>祐子内親王家紀伊<rt>ゆうしないしんのうけのきい</rt></ruby>", meaning: "噂に高い「高師の浜」のいたずらに立つ波のように、浮気なあなたの言葉などは心にかけますまい。（後で泣いて）涙で袖が濡れてしまっては困りますから。" },
+            { id: 73, kami: "<ruby>高砂<rt>たかさご</rt></ruby>の <ruby>尾<rt>を</rt></ruby>の<ruby>上<rt>へ</rt></ruby>の<ruby>桜<rt>さくら</rt></ruby> <ruby>咲<rt>さ</rt></ruby>きにけり", shimo: "<ruby>外山<rt>とやま</rt></ruby>の<ruby>霞<rt>かすみ</rt></ruby> <ruby>立<rt>た</rt></ruby>たずもあらなむ", author: "<ruby>前権中納言匡房<rt>さきのごんちゅうなごんまさふさ</rt></ruby>", meaning: "遠くの高い山の峰の桜が咲いたなあ。里に近い山の霞よ、どうか（桜が見えなくなるので）立たないでいておくれ。" },
+            { id: 74, kami: "<ruby>憂<rt>う</rt></ruby>かりける <ruby>人<rt>ひと</rt></ruby>を<ruby>初瀬<rt>はつせ</rt></ruby>の <ruby>山<rt>やま</rt></ruby>おろしよ", shimo: "<ruby>激<rt>はげ</rt></ruby>しかれとは <ruby>祈<rt>いの</rt></ruby>らぬものを", author: "<ruby>源俊頼朝臣<rt>みなもとのとしよりあそん</rt></ruby>", meaning: "私につれなかったあの人が、私になびくようにと初瀬の観音様に祈ったけれど、初瀬の山おろしのように、激しくつらくなれとは祈らなかったのに。" },
+            { id: 75, kami: "<ruby>契<rt>ちぎ</rt></ruby>りおきし させもが<ruby>露<rt>つゆ</rt></ruby>を <ruby>命<rt>いのち</rt></ruby>にて", shimo: "あはれ<ruby>今年<rt>ことし</rt></ruby>の <ruby>秋<rt>あき</rt></ruby>もいぬめり", author: "<ruby>藤原基俊<rt>ふじわらのもととし</rt></ruby>", meaning: "「約束を守る」とおっしゃった、その恵みの言葉を命として頼りにしてきましたが、ああ、その願いも叶わぬまま、今年の秋も過ぎ去ってしまうようです。" },
+            { id: 76, kami: "<ruby>わたの原<rt>わたのはら</rt></ruby> <ruby>漕<rt>こ</rt></ruby>ぎ<ruby>出<rt>い</rt></ruby>でて<ruby>見<rt>み</rt></ruby>れば <ruby>久方<rt>ひさかた</rt></ruby>の", shimo: "<ruby>雲居<rt>くもゐ</rt></ruby>にまがふ <ruby>沖<rt>おき</rt></ruby>つ<ruby>白波<rt>しらなみ</rt></ruby>", author: "<ruby>法性寺入道前関白太政大臣<rt>ほっしょうじにゅうどうさきのかんぱくだじょうだいじん</rt></ruby>", meaning: "広々とした海原に舟を漕ぎ出して見渡すと、遠く水平線のあたりでは、雲と見間違いそうなばかりに、沖の白波が立っていることだ。" },
+            { id: 77, kami: "<ruby>瀬<rt>せ</rt></ruby>をはやみ <ruby>岩<rt>いわ</rt></ruby>にせかるる <ruby>滝川<rt>たきがわ</rt></ruby>の", shimo: "われても<ruby>末<rt>すえ</rt></ruby>に <ruby>逢<rt>あ</rt></ruby>はむとぞ<ruby>思<rt>おも</rt></ruby>ふ", author: "<ruby>崇徳院<rt>すとくいん</rt></ruby>", meaning: "川の瀬の流れが速いので、岩にせき止められた急流が２つに分かれても、また1つになるように、私たちも（今は障害があって別れても）将来は必ず一緒になろうと思います。" },
+            { id: 78, kami: "<ruby>淡路島<rt>あはぢしま</rt></ruby> かよふ<ruby>千鳥<rt>ちどり</rt></ruby>の <ruby>鳴<rt>な</rt></ruby>く<ruby>声<rt>こゑ</rt></ruby>に", shimo: "<ruby>幾夜<rt>いくよ</rt></ruby><ruby>寝覚<rt>ねざ</rt></ruby>めぬ <ruby>須磨<rt>すま</rt></ruby>の<ruby>関守<rt>せきもり</rt></ruby>", author: "<ruby>源兼昌<rt>みなもとのかねまさ</rt></ruby>", meaning: "淡路島から通ってくる千鳥の悲しげな鳴き声に、幾晩目を覚まさせられたことだろうか、須磨の関守は。（私もそのように寂しく眠れない夜を過ごしている。）" },
+            { id: 79, kami: "<ruby>秋風<rt>あきかぜ</rt></ruby>に たなびく<ruby>雲<rt>くも</rt></ruby>の <ruby>絶<rt>た</rt></ruby>え<ruby>間<rt>ま</rt></ruby>より", shimo: "もれ<ruby>出<rt>い</rt></ruby>づる<ruby>月<rt>つき</rt></ruby>の <ruby>影<rt>かげ</rt></ruby>のさやけさ", author: "<ruby>左京大夫顕輔<rt>さきょうのだいぶあきすけ</rt></ruby>", meaning: "秋風に吹かれてたなびいている雲の切れ間から、漏れ出てくる月の光の、なんと清らかで明るいことだろう。" },
+            { id: 80, kami: "<ruby>長<rt>なが</rt></ruby>からむ <ruby>心<rt>こころ</rt></ruby>も<ruby>知<rt>し</rt></ruby>らず <ruby>黒髪<rt>くろかみ</rt></ruby>の", shimo: "<ruby>乱<rt>みだ</rt></ruby>れて<ruby>今朝<rt>けさ</rt></ruby>は ものをこそ<ruby>思<rt>おも</rt></ruby>へ", author: "<ruby>待賢門院堀河<rt>たいけんもんいんのほりかわ</rt></ruby>", meaning: "（末長く愛してくれるという）あなたの心が、いつまでも変わらないかどうか分かりませんので、別れた今朝は、私の黒髪のように心が乱れて、物思いに沈んでいます。" },
+            { id: 81, kami: "ほととぎす <ruby>鳴<rt>な</rt></ruby>きつる<ruby>方<rt>かた</rt></ruby>を <ruby>眺<rt>なが</rt></ruby>むれば", shimo: "ただ<ruby>有明<rt>ありあけ</rt></ruby>の <ruby>月<rt>つき</rt></ruby>ぞ<ruby>残<rt>のこ</rt></ruby>れる", author: "<ruby>後徳大寺左大臣<rt>ごとくだいじさだいじん</rt></ruby>", meaning: "ホトトギスが鳴いた方角を眺めてみたが、姿は見えず、ただ空には明け方の月が残っているばかりである。" },
+            { id: 82, kami: "<ruby>思<rt>おも</rt></ruby>ひわび さても<ruby>命<rt>いのち</rt></ruby>は あるものを", shimo: "<ruby>憂<rt>う</rt></ruby>きに<ruby>堪<rt>た</rt></ruby>へぬは <ruby>涙<rt>なみだ</rt></ruby>なりけり", author: "<ruby>道因法師<rt>どういんほうし</rt></ruby>", meaning: "（つれない人のことを）思い悩み、それでも命だけはどうにかあるものの、そのつらさに耐えきれずに流れるのは涙であったよ。" },
+            { id: 83, kami: "<ruby>世<rt>よ</rt></ruby>の<ruby>中<rt>なか</rt></ruby>よ <ruby>道<rt>みち</rt></ruby>こそなけれ <ruby>思<rt>おも</rt></ruby>ひ<ruby>入<rt>い</rt></ruby>る", shimo: "<ruby>山<rt>やま</rt></ruby>の<ruby>奥<rt>おく</rt></ruby>にも <ruby>鹿<rt>しか</rt></ruby>ぞ<ruby>鳴<rt>な</rt></ruby>くなる", author: "<ruby>皇太后宮大夫俊成<rt>こうたいごうぐうのだいぶしゅんぜい</rt></ruby>", meaning: "この世の中には、（つらさから逃れる）道などないのだなあ。思い詰めて分け入った山奥でさえ、悲しげに鹿が鳴いているのが聞こえるよ。" },
+            { id: 84, kami: "ながらへば またこのごろや しのばれむ", shimo: "<ruby>憂<rt>う</rt></ruby>しと<ruby>見<rt>み</rt></ruby>し<ruby>世<rt>よ</rt></ruby>ぞ <ruby>今<rt>いま</rt></ruby>は<ruby>恋<rt>こひ</rt></ruby>しき", author: "<ruby>藤原清輔朝臣<rt>ふじわらのきよすけあそん</rt></ruby>", meaning: "もしこの先生き長らえたならば、今のつらい日々も懐かしく思い出されるのだろうか。（かつては）つらいと思っていた昔の日々が、今となっては恋しく思われるのだから。" },
+            { id: 85, kami: "<ruby>夜<rt>よ</rt></ruby>もすがら もの<ruby>思<rt>おも</rt></ruby>ふころは <ruby>明<rt>あ</rt></ruby>けやらで", shimo: "<ruby>閨<rt>ねや</rt></ruby>の<ruby>ひま<rt>ひま</rt></ruby>さへ つれなかりけり", author: "<ruby>俊恵法師<rt>しゅんえほうし</rt></ruby>", meaning: "一晩中、恋しい人のことを思い続けているこの頃は、夜がなかなか明けず、寝室の隙間さえもがつれなく感じられる。" },
+            { id: 86, kami: "<ruby>嘆<rt>なげ</rt></ruby>けとて <ruby>月<rt>つき</rt></ruby>やはものを <ruby>思<rt>おも</rt></ruby>はする", shimo: "かこち<ruby>顔<rt>がほ</rt></ruby>なる わが<ruby>涙<rt>なみだ</rt></ruby>かな", author: "<ruby>西行法師<rt>さいぎょうほうし</rt></ruby>", meaning: "「嘆け」と言って、月が私に物思いをさせるのだろうか、いや、そうではない。（月を恨めしそうに見上げて流れる）私の涙であることよ。" },
+            { id: 87, kami: "<ruby>村雨<rt>むらさめ</rt></ruby>の <ruby>露<rt>つゆ</rt></ruby>もまだひぬ <ruby>真木<rt>まき</rt></ruby>の<ruby>葉<rt>は</rt></ruby>に", shimo: "<ruby>霧<rt>きり</rt></ruby><ruby>立<rt>た</rt></ruby>ちのぼる <ruby>秋<rt>あき</rt></ruby>の<ruby>夕暮<rt>ゆうぐ</rt></ruby>れ", author: "<ruby>寂蓮法師<rt>じゃくれんほうし</rt></ruby>", meaning: "にわか雨が通り過ぎて、その露もまだ乾いていない真木（杉や檜）の葉に、霧が白く立ち上っていく秋の夕暮れであることよ。" },
+            { id: 88, kami: "<ruby>難波江<rt>なにはえ</rt></ruby>の <ruby>芦<rt>あし</rt></ruby>のかりねの <ruby>ひとよ<rt>ひとよ</rt></ruby>ゆゑ", shimo: "みをつくしてや <ruby>恋<rt>こひ</rt></ruby>ひわたるべき", author: "<ruby>皇嘉門院別当<rt>こうかもんいんのべっとう</rt></ruby>", meaning: "難波江の芦の刈り根の「ひと節」ほどの、ほんの「一夜」の契りのために、澪標（みおつくし）のように身を尽くして、あなたを恋い続けなければならないのでしょうか。" },
+            { id: 89, kami: "<ruby>玉<rt>たま</rt></ruby>の<ruby>緒<rt>を</rt></ruby>よ <ruby>絶<rt>た</rt></ruby>えなば<ruby>絶<rt>た</rt></ruby>えね ながらへば", shimo: "<ruby>忍<rt>しの</rt></ruby>ぶることの <ruby>弱<rt>よわ</rt></ruby>りもぞする", author: "<ruby>式子内親王<rt>しょくしないしんのう</rt></ruby>", meaning: "私の命よ、絶えるならいっそ絶えてしまっておくれ。このまま生き長らえていると、（心に秘めている）恋を耐え忍ぶ力が弱くなって、（人に知られて）しまいそうだから。" },
+            { id: 90, kami: "<ruby>見<rt>み</rt></ruby>せばやな <ruby>雄島<rt>をじま</rt></ruby>の<ruby>海人<rt>あま</rt></ruby>の <ruby>袖<rt>そで</rt></ruby>だにも", shimo: "<ruby>濡<rt>ぬ</rt></ruby>れにぞ<ruby>濡<rt>ぬ</rt></ruby>れし <ruby>色<rt>いろ</rt></ruby>は<ruby>変<rt>か</rt></ruby>はらず", author: "<ruby>殷富門院大輔<rt>いんぷもんいんのたいふ</rt></ruby>", meaning: "お見せしたいものです。（恋の涙に濡れた私の袖を。）松島の雄島の漁師の袖でさえ、波しぶきに濡れに濡れても、色は変わらないというのに。（私の袖は血の涙で色が変わってしまいました。）" },
+            { id: 91, kami: "きりぎりす <ruby>鳴<rt>な</rt></ruby>くや<ruby>霜夜<rt>しもよ</rt></ruby>の さむしろに", shimo: "<ruby>衣<rt>ころも</rt></ruby>かたしき <ruby>ひとり<rt>ひとり</rt></ruby>かも<ruby>寝<rt>ね</rt></ruby>む", author: "<ruby>後京極摂政前太政大臣<rt>ごきょうごくせっしょうさきのだじょうだいじん</rt></ruby>", meaning: "こおろぎが鳴いている霜の降りる寒い夜、むしろの上に自分の衣の片袖を敷いて、私はひとり寂しく寝るのだろうか。" },
+            { id: 92, kami: "わが<ruby>袖<rt>そで</rt></ruby>は <ruby>潮干<rt>しほひ</rt></ruby>に<ruby>見<rt>み</rt></ruby>えぬ <ruby>沖<rt>おき</rt></ruby>の<ruby>石<rt>いし</rt></ruby>の", shimo: "<ruby>人<rt>ひと</rt></ruby>こそ<ruby>知<rt>し</rt></ruby>らね <ruby>乾<rt>かわ</rt></ruby>く<ruby>間<rt>ま</rt></ruby>もなし", author: "<ruby>二条院讃岐<rt>にじょういんのさぬき</rt></ruby>", meaning: "私の袖は、引き潮のときでも隠れて見えない沖の石のように、人は知らないでしょうが、涙で濡れて乾く間もありません。" },
+            { id: 93, kami: "<ruby>世<rt>よ</rt></ruby>の<ruby>中<rt>なか</rt></ruby>は <ruby>常<rt>つね</rt></ruby>にもがもな <ruby>渚<rt>なぎさ</rt></ruby><ruby>漕<rt>こ</rt></ruby>ぐ", shimo: "<ruby>海人<rt>あま</rt></ruby>の<ruby>小舟<rt>おぶね</rt></ruby>の <ruby>綱手<rt>つなで</rt></ruby>かなしも", author: "<ruby>鎌倉右大臣<rt>かまくらのうだいじん</rt></ruby>", meaning: "この世の中は、いつまでも変わらないであってほしいものだなあ。渚を漕いでゆく漁師の小舟が、引いている綱手を見ていると切なく愛おしいことだよ。" },
+            { id: 94, kami: "<ruby>み吉野<rt>みよしの</rt></ruby>の <ruby>山<rt>やま</rt></ruby>の<ruby>秋風<rt>あきかぜ</rt></ruby> <ruby>小夜<rt>さよ</rt></ruby>ふけて", shimo: "ふるさと<ruby>寒<rt>さむ</rt></ruby>く <ruby>衣<rt>ころも</rt></ruby><ruby>打<rt>う</rt></ruby>つなり", author: "<ruby>参議雅経<rt>さんぎまさつね</rt></ruby>", meaning: "吉野の山に秋風が吹いて、夜が更けてくると、古里の吉野は寒々と感じられ、衣を打つ砧（きぬた）の音が聞こえてくることだ。" },
+            { id: 95, kami: "おほけなく <ruby>憂<rt>う</rt></ruby>き<ruby>世<rt>よ</rt></ruby>の<ruby>民<rt>たみ</rt></ruby>に おほふかな", shimo: "わが<ruby>立<rt>た</rt></ruby>つ<ruby>杣<rt>そま</rt></ruby>に <ruby>墨染<rt>すみぞめ</rt></ruby>の<ruby>袖<rt>そで</rt></ruby>", author: "<ruby>前大僧正慈円<rt>さきのだいそうじょうじえん</rt></ruby>", meaning: "身の程知らずなことだが、このつらい現世を生きる民たちを包み込んで守ろう。（比叡山に）住み始めた私が着ている墨染めの袖で。" },
+            { id: 96, kami: "<ruby>花<rt>はな</rt></ruby>さそふ <ruby>嵐<rt>あらし</rt></ruby>の<ruby>庭<rt>にわ</rt></ruby>の <ruby>雪<rt>ゆき</rt></ruby>ならで", shimo: "ふりゆくものは わが<ruby>身<rt>み</rt></ruby>なりけり", author: "<ruby>入道前太政大臣<rt>にゅうどうさきのだじょうだいじん</rt></ruby>", meaning: "花を誘って散らす嵐が吹く庭の、雪のように降る桜ではなくて、古りゆく（年老いていく）ものは、わが身であったのだなあ。" },
+            { id: 97, kami: "こぬ<ruby>人<rt>ひと</rt></ruby>を まつほの<ruby>浦<rt>うら</rt></ruby>の <ruby>夕<rt>ゆふ</rt></ruby>なぎに", shimo: "<ruby>焼<rt>や</rt></ruby>くや<ruby>藻塩<rt>もしほ</rt></ruby>の <ruby>身<rt>み</rt></ruby>もこがれつつ", author: "<ruby>権中納言定家<rt>ごんちゅうなごんていか</rt></ruby>", meaning: "待っても来ない人を待って、松帆の浦の夕凪の時に焼いている藻塩のように、私の身も恋い焦がれていることですよ。" },
+            { id: 98, kami: "<ruby>風<rt>かぜ</rt></ruby>そよぐ ならの<ruby>小川<rt>おがわ</rt></ruby>の <ruby>夕暮<rt>ゆうぐ</rt></ruby>れは", shimo: "みそぎぞ<ruby>夏<rt>なつ</rt></ruby>の しるしなりける", author: "<ruby>従二位家隆<rt>じゅにいぐいえだか</rt></ruby>", meaning: "風がそよぐ楢の小川の夕暮れは、（秋のように涼しいけれど）六月祓（みなづきばらえ）の禊（みそぎ）だけが、夏であることの証拠なのだなあ。" },
+            { id: 99, kami: "<ruby>人<rt>ひと</rt></ruby>も<ruby>惜<rt>を</rt></ruby>し <ruby>人<rt>ひと</rt></ruby>も<ruby>恨<rt>うら</rt></ruby>めし あぢきなく", shimo: "<ruby>世<rt>よ</rt></ruby>を<ruby>思<rt>おも</rt></ruby>ふゆゑに もの<ruby>思<rt>おも</rt></ruby>ふ<ruby>身<rt>み</rt></ruby>は", author: "<ruby>後鳥羽院<rt>ごとばいん</rt></ruby>", meaning: "人が愛しくも思われ、また恨めしくも思われます。どうにもならない世の中を悩むがゆえに、あれこれと物思いをする私にとっては。" },
+            { id: 100, kami: "<ruby>百敷<rt>ももしき</rt></ruby>や <ruby>古<rt>ふ</rt></ruby>き<ruby>軒端<rt>のきば</rt></ruby>の しのぶにも", shimo: "なほあまりある <ruby>昔<rt>むかし</rt></ruby>なりけり", author: "<ruby>順徳院<rt>じゅんとくいん</rt></ruby>", meaning: "宮中の古びた建物の軒端に生えている忍ぶ草を見るにつけても、どれほど忍んでも忍びきれないほど恋しく思い出される、昔（の帝の御代）であることよ。" }
+        ];
+
+        const shuffleArray = (array) => {
+            const newArray = [...array];
+            for (let i = newArray.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+            }
+            return newArray;
+        };
+
+        // --- コンポーネント ---
+
+        // HTML文字列をレンダリングするヘルパー
+        const HtmlText = ({ html, className = "" }) => (
+            <span 
+                className={className}
+                dangerouslySetInnerHTML={{ __html: html }} 
+            />
+        );
+
+        // スタート画面
+        const StartScreen = ({ onStart, isMuted, toggleMute }) => (
+            <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in relative">
+                <div className="space-y-4">
+                    <h1 className="text-4xl md:text-6xl font-serif font-bold text-stone-800 tracking-widest mb-2">百人一首</h1>
+                    <p className="text-xl md:text-2xl font-serif text-stone-600">練習帳</p>
+                </div>
+                
+                <div className="p-8 bg-stone-100/50 rounded-lg border border-stone-300 max-w-md w-full backdrop-blur-sm">
+                    <p className="text-stone-700 mb-6 leading-relaxed">
+                        上の句を見て、正しい下の句を選んでください。<br/>
+                        全100首からランダムに10問出題されます。
+                    </p>
+                    <div className="space-y-4">
+                        <button 
+                            onClick={onStart}
+                            className="w-full group relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold text-white transition-all duration-200 bg-red-700 font-serif rounded-full hover:bg-red-800 hover:scale-105 shadow-lg"
+                        >
+                            <Icon name="Play" className="w-6 h-6 mr-2 fill-current" />
+                            いざ、勝負
+                        </button>
+
+                        <button 
+                            onClick={toggleMute}
+                            className="flex items-center justify-center mx-auto text-stone-500 hover:text-stone-700 text-sm gap-2"
+                        >
+                            <Icon name={isMuted ? "VolumeX" : "Volume2"} className="w-4 h-4" />
+                            {isMuted ? "音声オフ" : "音声オン (BGMあり)"}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // 結果画面
+        const ResultScreen = ({ score, total, onRestart }) => {
+            let message = "";
+            if (score === total) message = "見事！全問正解です！";
+            else if (score >= total * 0.8) message = "素晴らしい！その調子です。";
+            else if (score >= total * 0.5) message = "あと少し！繰り返し練習しましょう。";
+            else message = "まずは基本から覚えていきましょう。";
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in">
+                    <div className="bg-white p-10 rounded-xl shadow-xl border-2 border-stone-200 max-w-lg w-full">
+                        <Icon name="Trophy" className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
+                        <h2 className="text-3xl font-bold font-serif text-stone-800 mb-2">結果発表</h2>
+                        <div className="text-6xl font-bold text-red-700 my-6 font-serif">
+                            {score} <span className="text-2xl text-stone-500">/ {total}</span>
+                        </div>
+                        <p className="text-lg text-stone-700 mb-8 font-medium">{message}</p>
+                        
+                        <button 
+                            onClick={onRestart}
+                            className="w-full flex items-center justify-center px-6 py-3 text-lg font-bold text-stone-700 transition-all duration-200 bg-stone-200 rounded-lg hover:bg-stone-300 hover:scale-105"
+                        >
+                            <Icon name="RefreshCw" className="w-5 h-5 mr-2" />
+                            もう一度挑戦
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // 解説モーダル
+        const ExplanationModal = ({ poem, isCorrect, onClose, isLastQuestion }) => {
+            useEffect(() => {
+                if (isCorrect) audioManager.playCorrect();
+                else audioManager.playWrong();
+            }, []);
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 md:p-8 animate-pop-in relative overflow-hidden flex flex-col max-h-[90vh]">
+                        
+                        {/* 背景装飾 */}
+                        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-orange-400 to-red-500"></div>
+
+                        <div className="flex flex-col items-center mb-4 flex-shrink-0">
+                            {isCorrect ? (
+                                <>
+                                    <Icon name="CheckCircle" className="w-12 h-12 text-green-500 mb-2" />
+                                    <h3 className="text-xl font-bold text-green-600 font-serif">正解</h3>
+                                </>
+                            ) : (
+                                <>
+                                    <Icon name="XCircle" className="w-12 h-12 text-red-500 mb-2" />
+                                    <h3 className="text-xl font-bold text-red-600 font-serif">残念</h3>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="space-y-4 mb-6 bg-stone-50 p-4 rounded-lg border border-stone-200 overflow-y-auto custom-scrollbar flex-grow">
+                            
+                            {/* 上の句追加 */}
+                            <div>
+                                <div className="text-xs text-stone-400 font-bold mb-1">上の句</div>
+                                <div className="text-lg md:text-xl font-serif font-bold text-stone-700 border-b border-stone-300 pb-2 mb-2">
+                                    <HtmlText html={poem.kami} />
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="text-xs text-stone-400 font-bold mb-1">正解の下の句</div>
+                                <div className="text-xl md:text-2xl font-serif font-bold text-stone-900 border-b border-stone-300 pb-2 mb-2">
+                                    <HtmlText html={poem.shimo} />
+                                </div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs font-bold text-red-800 bg-red-100 px-2 py-0.5 rounded w-fit">作者</span>
+                                <span className="font-serif text-lg"><HtmlText html={poem.author} /></span>
+                            </div>
+                            
+                            <div>
+                                <span className="text-xs font-bold text-stone-600 bg-stone-200 px-2 py-0.5 rounded inline-block mb-1">現代語訳</span>
+                                <p className="text-stone-700 leading-relaxed text-sm md:text-base">
+                                    {poem.meaning}
+                                </p>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={onClose}
+                            className="w-full inline-flex items-center justify-center px-6 py-3 bg-stone-800 text-white font-bold text-lg rounded-xl hover:bg-stone-900 transition-all transform hover:scale-[1.02] shadow-lg flex-shrink-0"
+                        >
+                            {isLastQuestion ? "結果を見る" : "次の問題へ"}
+                            <Icon name="ArrowRight" className="w-5 h-5 ml-2" />
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // ゲーム画面
+        const GameScreen = ({ onFinish }) => {
+            const QUESTIONS_PER_ROUND = 10;
+            
+            const [questions, setQuestions] = useState([]);
+            const [currentIndices, setCurrentIndices] = useState(0);
+            const [score, setScore] = useState(0);
+            const [selectedOption, setSelectedOption] = useState(null);
+            const [options, setOptions] = useState([]);
+            const [isAnswered, setIsAnswered] = useState(false);
+            const [showModal, setShowModal] = useState(false);
+
+            // ゲーム初期化
+            useEffect(() => {
+                const shuffled = shuffleArray(ALL_POEMS).slice(0, QUESTIONS_PER_ROUND);
+                setQuestions(shuffled);
+                setCurrentIndices(0);
+                setScore(0);
+            }, []);
+
+            const currentPoem = questions[currentIndices];
+
+            // 選択肢生成
+            useEffect(() => {
+                if (!currentPoem) return;
+                const distractors = shuffleArray(ALL_POEMS.filter(p => p.id !== currentPoem.id)).slice(0, 3);
+                const newOptions = shuffleArray([currentPoem, ...distractors]);
+                setOptions(newOptions);
+                setIsAnswered(false);
+                setSelectedOption(null);
+                setShowModal(false);
+            }, [currentPoem]);
+
+            const handleOptionClick = (poemId) => {
+                if (isAnswered) return;
+                
+                setSelectedOption(poemId);
+                setIsAnswered(true);
+
+                const isCorrect = poemId === currentPoem.id;
+                if (isCorrect) {
+                    setScore(prev => prev + 1);
+                }
+                
+                // 少しだけ遅らせてモーダルを表示（ボタンのクリック感のため）
+                setTimeout(() => setShowModal(true), 300);
+            };
+
+            const handleNext = () => {
+                setShowModal(false);
+                if (currentIndices + 1 < QUESTIONS_PER_ROUND) {
+                    setCurrentIndices(prev => prev + 1);
+                } else {
+                    onFinish(score + (selectedOption === currentPoem.id ? 0 : 0));
+                }
+            };
+
+            if (!currentPoem) return <div className="p-8 text-center">読み込み中...</div>;
+
+            return (
+                <div className="w-full max-w-2xl mx-auto space-y-6 animate-fade-in pb-12">
+                    {/* 解説モーダル */}
+                    {showModal && (
+                        <ExplanationModal 
+                            poem={currentPoem}
+                            isCorrect={selectedOption === currentPoem.id}
+                            onClose={handleNext}
+                            isLastQuestion={currentIndices + 1 >= QUESTIONS_PER_ROUND}
+                        />
+                    )}
+
+                    {/* ヘッダー情報 */}
+                    <div className="flex items-center justify-between text-stone-500 font-serif px-1">
+                        <span className="text-lg">第 {currentIndices + 1} 問</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm">正解数</span>
+                            <span className="text-xl font-bold text-red-700">{score}</span>
+                        </div>
+                    </div>
+                    
+                    {/* プログレスバー */}
+                    <div className="w-full bg-stone-200 rounded-full h-2.5">
+                        <div 
+                            className="bg-red-700 h-2.5 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(185,28,28,0.3)]"
+                            style={{ width: `${((currentIndices) / QUESTIONS_PER_ROUND) * 100}%` }}
+                        ></div>
+                    </div>
+
+                    {/* 上の句カード */}
+                    <div className="bg-gradient-to-br from-stone-50 to-stone-100 border-2 border-stone-300 rounded-xl p-8 md:p-12 shadow-md text-center relative overflow-hidden group">
+                        <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-stone-300 to-transparent opacity-50"></div>
+                        <div className="absolute top-3 right-4 text-xs text-stone-400 writing-vertical tracking-widest opacity-60 select-none font-serif">読み札</div>
+                        
+                        <h2 className="text-2xl md:text-4xl font-serif font-bold text-stone-900 leading-loose tracking-wider">
+                            <HtmlText html={currentPoem.kami} />
+                        </h2>
+                    </div>
+
+                    {/* 選択肢 */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {options.map((option) => {
+                            // モーダルが出るまでは正誤の色を出さない（タップした瞬間だけ反応させる）
+                            const isSelected = selectedOption === option.id;
+                            let btnClass = "relative overflow-hidden p-4 md:p-6 rounded-xl border-2 text-lg font-serif transition-all duration-200 shadow-sm text-left leading-relaxed ";
+                            
+                            if (isSelected) {
+                                btnClass += "bg-stone-200 border-stone-400 scale-[0.98] ";
+                            } else {
+                                btnClass += "bg-white border-stone-200 text-stone-800 hover:border-red-400 hover:bg-red-50/30 hover:shadow-md cursor-pointer hover:-translate-y-0.5 ";
+                            }
+
+                            return (
+                                <button
+                                    key={option.id}
+                                    onClick={() => handleOptionClick(option.id)}
+                                    disabled={isAnswered}
+                                    className={btnClass}
+                                >
+                                    <HtmlText html={option.shimo} />
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        // アプリ全体
+        const App = () => {
+            const [gameState, setGameState] = useState('start');
+            const [finalScore, setFinalScore] = useState(0);
+            const [isMuted, setIsMuted] = useState(false);
+
+            const toggleMute = () => {
+                const newState = !isMuted;
+                setIsMuted(newState);
+                audioManager.isMuted = newState;
+                audioManager.toggleBgm(!newState && gameState !== 'start');
+            };
+
+            const startGame = () => {
+                // 初回のみAudioContextの再開が必要な場合がある
+                audioManager.init();
+                audioManager.toggleBgm(!isMuted);
+                setGameState('playing');
+            };
+
+            const finishGame = (score) => {
+                setFinalScore(score);
+                setGameState('result');
+                // BGMは止めない
+            };
+
+            const restartGame = () => {
+                setGameState('start');
+            };
+
+            return (
+                <div className="min-h-screen relative overflow-hidden">
+                    {/* 背景パターン */}
+                    <div className="absolute inset-0 pointer-events-none opacity-[0.03]" 
+                         style={{ backgroundImage: 'radial-gradient(#444 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+                    </div>
+
+                    <header className="bg-red-900 text-white py-4 shadow-lg relative z-10">
+                        <div className="container mx-auto px-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <Icon name="BookOpen" className="w-6 h-6" />
+                                <h1 className="font-serif font-bold text-xl tracking-widest">百人一首 練習帳</h1>
+                            </div>
+                            <button onClick={toggleMute} className="text-white/80 hover:text-white transition-colors">
+                                <Icon name={isMuted ? "VolumeX" : "Volume2"} className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="container mx-auto px-4 py-8 relative z-10 pb-20">
+                        {gameState === 'start' && <StartScreen onStart={startGame} isMuted={isMuted} toggleMute={toggleMute} />}
+                        {gameState === 'playing' && <GameScreen onFinish={finishGame} />}
+                        {gameState === 'result' && <ResultScreen score={finalScore} total={10} onRestart={restartGame} />}
+                    </main>
+
+                    <footer className="absolute bottom-0 w-full text-center py-4 text-stone-400 text-xs font-serif bg-[#f7f3e8]/80 backdrop-blur">
+                        <p>小倉百人一首 練習アプリ</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
