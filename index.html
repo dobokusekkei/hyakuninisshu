@@ -18,7 +18,7 @@
             font-size: 0.6em;
             color: #888;
             font-weight: normal;
-            user-select: none; /* ルビを選択不可にしてコピー時の挙動を改善 */
+            user-select: none;
         }
         /* 縦書き対応（読み札用） */
         .writing-vertical {
@@ -64,18 +64,22 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
-        // --- アイコン定義 (SVG直接定義) ---
+        // --- アイコン定義 ---
         const Icon = ({ name, className }) => {
             const paths = {
                 BookOpen: <><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>,
                 RefreshCw: <><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></>,
                 Trophy: <><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></>,
                 ArrowRight: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
+                ArrowLeft: <><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></>,
                 CheckCircle: <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></>,
                 XCircle: <><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></>,
                 Play: <polygon points="5 3 19 12 5 21 5 3" />,
                 Volume2: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></>,
-                VolumeX: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></>
+                VolumeX: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></>,
+                Target: <><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>,
+                AlertCircle: <><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></>,
+                List: <><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></>
             };
 
             const path = paths[name];
@@ -190,7 +194,7 @@
 
         const audioManager = new AudioManager();
 
-        // --- 全100首データ (ルビ・現代語訳付き・歴史的仮名遣い) ---
+        // --- 全100首データ ---
         const ALL_POEMS = [
             { id: 1, kami: "<ruby>秋<rt>あき</rt></ruby>の<ruby>田<rt>た</rt></ruby>の <ruby>かりほ<rt>かりほ</rt></ruby>の<ruby>庵<rt>いほ</rt></ruby>の <ruby>苫<rt>とま</rt></ruby>を<ruby>あら<rt>あら</rt></ruby>み", shimo: "わが<ruby>衣手<rt>ころもで</rt></ruby>は <ruby>露<rt>つゆ</rt></ruby>にぬれつつ", author: "<ruby>天智天皇<rt>てんじてんのう</rt></ruby>", meaning: "秋の田んぼのそばにある仮小屋は、屋根をふいた苫の編み目が粗いので、私の着物の袖は夜露で濡れていくばかりだ。" },
             { id: 2, kami: "<ruby>春<rt>はる</rt></ruby>すぎて <ruby>夏<rt>なつ</rt></ruby><ruby>来<rt>き</rt></ruby>にけらし <ruby>白妙<rt>しろたへ</rt></ruby>の", shimo: "<ruby>衣<rt>ころも</rt></ruby>ほすてふ <ruby>天<rt>あま</rt></ruby>の<ruby>香具山<rt>かぐやま</rt></ruby>", author: "<ruby>持統天皇<rt>じとうてんのう</rt></ruby>", meaning: "いつのまにか春が過ぎて、夏がやって来たらしい。夏になると真っ白な衣を干すという天の香具山に、その衣が見えているから。" },
@@ -314,38 +318,190 @@
         );
 
         // スタート画面
-        const StartScreen = ({ onStart, isMuted, toggleMute }) => (
-            <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in relative">
+        const StartScreen = ({ onStartNormal, onStartWeak, onShowList, isMuted, toggleMute, mistakeCount, learnedCount }) => (
+            <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in relative pb-8">
                 <div className="space-y-4">
                     <h1 className="text-4xl md:text-6xl font-serif font-bold text-stone-800 tracking-widest mb-2">百人一首</h1>
                     <p className="text-xl md:text-2xl font-serif text-stone-600">練習帳</p>
                 </div>
                 
-                <div className="p-8 bg-stone-100/50 rounded-lg border border-stone-300 max-w-md w-full backdrop-blur-sm">
-                    <p className="text-stone-700 mb-6 leading-relaxed">
-                        上の句を見て、正しい下の句を選んでください。<br/>
-                        全100首からランダムに10問出題されます。
-                    </p>
-                    <div className="space-y-4">
-                        <button 
-                            onClick={onStart}
-                            className="w-full group relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold text-white transition-all duration-200 bg-red-700 font-serif rounded-full hover:bg-red-800 hover:scale-105 shadow-lg"
-                        >
-                            <Icon name="Play" className="w-6 h-6 mr-2 fill-current" />
-                            いざ、勝負
-                        </button>
+                <div className="w-full max-w-md px-4">
+                    <div className="p-8 bg-stone-100/50 rounded-lg border border-stone-300 w-full backdrop-blur-sm shadow-xl">
+                        
+                        {/* 習得進捗サークル */}
+                        <div className="flex justify-center mb-8 relative">
+                            <div className="relative w-32 h-32 flex items-center justify-center">
+                                <svg className="transform -rotate-90 w-32 h-32">
+                                    <circle cx="64" cy="64" r="60" stroke="#e7e5e4" strokeWidth="8" fill="transparent" />
+                                    <circle cx="64" cy="64" r="60" stroke="#b91c1c" strokeWidth="8" fill="transparent"
+                                            strokeDasharray={2 * Math.PI * 60}
+                                            strokeDashoffset={2 * Math.PI * 60 * (1 - learnedCount / 100)}
+                                            className="transition-all duration-1000 ease-out" />
+                                </svg>
+                                <div className="absolute flex flex-col items-center">
+                                    <span className="text-xs text-stone-500 font-bold mb-1">覚えた</span>
+                                    <span className="text-3xl font-bold text-stone-800 font-serif">
+                                        {learnedCount}<span className="text-sm text-stone-400">/100</span>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
 
-                        <button 
-                            onClick={toggleMute}
-                            className="flex items-center justify-center mx-auto text-stone-500 hover:text-stone-700 text-sm gap-2"
-                        >
-                            <Icon name={isMuted ? "VolumeX" : "Volume2"} className="w-4 h-4" />
-                            {isMuted ? "音声オフ" : "音声オン (BGMあり)"}
-                        </button>
+                        <div className="space-y-4">
+                            <button 
+                                onClick={onStartNormal}
+                                className="w-full group relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold text-white transition-all duration-200 bg-red-700 font-serif rounded-full hover:bg-red-800 hover:scale-105 shadow-lg"
+                            >
+                                <Icon name="Play" className="w-6 h-6 mr-2 fill-current" />
+                                通常モード
+                            </button>
+
+                            <div className="relative">
+                                <button 
+                                    onClick={onStartWeak}
+                                    disabled={mistakeCount === 0}
+                                    className={`w-full group relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold transition-all duration-200 font-serif rounded-full shadow-lg border-2
+                                        ${mistakeCount > 0 
+                                            ? 'bg-white text-stone-800 border-red-700 hover:bg-red-50 hover:scale-105' 
+                                            : 'bg-stone-200 text-stone-400 border-stone-300 cursor-not-allowed'}`}
+                                >
+                                    <Icon name="Target" className="w-6 h-6 mr-2" />
+                                    弱点克服モード
+                                    {mistakeCount > 0 && (
+                                        <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full shadow-sm animate-bounce">
+                                            {mistakeCount}
+                                        </span>
+                                    )}
+                                </button>
+                                {mistakeCount === 0 && (
+                                    <p className="text-xs text-stone-500 mt-1">※ 間違えた問題がここに溜まります</p>
+                                )}
+                            </div>
+
+                            <button 
+                                onClick={onShowList}
+                                className="w-full inline-flex items-center justify-center px-6 py-3 text-lg font-bold text-stone-600 bg-white border-2 border-stone-300 rounded-full hover:bg-stone-50 hover:border-stone-400 transition-all shadow-sm"
+                            >
+                                <Icon name="List" className="w-5 h-5 mr-2" />
+                                覚えたリストを見る
+                            </button>
+
+                            <div className="pt-4 border-t border-stone-200">
+                                <button 
+                                    onClick={toggleMute}
+                                    className="flex items-center justify-center mx-auto text-stone-500 hover:text-stone-700 text-sm gap-2"
+                                >
+                                    <Icon name={isMuted ? "VolumeX" : "Volume2"} className="w-4 h-4" />
+                                    {isMuted ? "音声オフ" : "音声オン (BGMあり)"}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         );
+
+        // 覚えたリスト画面
+        const LearnedListScreen = ({ learnedIds, onBack }) => {
+            const [selectedPoem, setSelectedPoem] = useState(null);
+
+            return (
+                <div className="w-full max-w-4xl mx-auto p-4 animate-fade-in pb-20">
+                    <div className="flex items-center justify-between mb-6">
+                        <button 
+                            onClick={onBack}
+                            className="inline-flex items-center px-4 py-2 bg-stone-200 rounded-lg hover:bg-stone-300 text-stone-700 font-bold transition-colors"
+                        >
+                            <Icon name="ArrowLeft" className="w-5 h-5 mr-1" />
+                            戻る
+                        </button>
+                        <h2 className="text-2xl font-serif font-bold text-stone-800">覚えた句一覧</h2>
+                        <div className="text-lg font-bold text-red-700 bg-red-50 px-3 py-1 rounded-full border border-red-200">
+                            {learnedIds.length} <span className="text-stone-500 text-sm">/ 100</span>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-5 md:grid-cols-10 gap-2">
+                        {ALL_POEMS.map((poem) => {
+                            const isLearned = learnedIds.includes(poem.id);
+                            return (
+                                <button
+                                    key={poem.id}
+                                    onClick={() => setSelectedPoem(poem)}
+                                    className={`aspect-square flex flex-col items-center justify-center rounded-lg border transition-all duration-200
+                                        ${isLearned 
+                                            ? 'bg-gradient-to-br from-red-50 to-pink-100 border-red-200 text-red-900 shadow-sm hover:scale-105 hover:shadow-md' 
+                                            : 'bg-stone-200 border-stone-300 text-stone-400 grayscale opacity-70 hover:opacity-100 hover:bg-stone-300'}`}
+                                >
+                                    <span className="text-xs font-bold mb-1">{poem.id}</span>
+                                    {isLearned ? (
+                                        <Icon name="CheckCircle" className="w-4 h-4 text-red-500" />
+                                    ) : (
+                                        <div className="w-4 h-4 rounded-full border-2 border-stone-400"></div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {/* 詳細モーダル（閲覧用） */}
+                    {selectedPoem && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedPoem(null)}>
+                            <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 md:p-8 animate-pop-in relative overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-stone-300 via-stone-400 to-stone-300"></div>
+                                
+                                <div className="mb-4 text-center">
+                                    <span className="inline-block bg-stone-100 text-stone-600 text-xs px-2 py-1 rounded-full font-bold mb-2">第{selectedPoem.id}番</span>
+                                    <div className="flex justify-center items-center gap-2">
+                                        {learnedIds.includes(selectedPoem.id) ? (
+                                            <span className="flex items-center text-green-600 font-bold text-sm bg-green-50 px-3 py-1 rounded-full">
+                                                <Icon name="CheckCircle" className="w-4 h-4 mr-1" /> 習得済み
+                                            </span>
+                                        ) : (
+                                            <span className="flex items-center text-stone-500 font-bold text-sm bg-stone-100 px-3 py-1 rounded-full">
+                                                未習得
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 mb-6 bg-stone-50 p-4 rounded-lg border border-stone-200 overflow-y-auto custom-scrollbar">
+                                    <div>
+                                        <div className="text-xs text-stone-400 font-bold mb-1">上の句</div>
+                                        <div className="text-lg md:text-xl font-serif font-bold text-stone-700 border-b border-stone-300 pb-2 mb-2">
+                                            <HtmlText html={selectedPoem.kami} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs text-stone-400 font-bold mb-1">下の句</div>
+                                        <div className="text-xl md:text-2xl font-serif font-bold text-stone-900 border-b border-stone-300 pb-2 mb-2">
+                                            <HtmlText html={selectedPoem.shimo} />
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-xs font-bold text-red-800 bg-red-100 px-2 py-0.5 rounded w-fit">作者</span>
+                                        <span className="font-serif text-lg"><HtmlText html={selectedPoem.author} /></span>
+                                    </div>
+                                    <div>
+                                        <span className="text-xs font-bold text-stone-600 bg-stone-200 px-2 py-0.5 rounded inline-block mb-1">現代語訳</span>
+                                        <p className="text-stone-700 leading-relaxed text-sm md:text-base">
+                                            {selectedPoem.meaning}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => setSelectedPoem(null)}
+                                    className="w-full inline-flex items-center justify-center px-6 py-3 bg-stone-800 text-white font-bold text-lg rounded-xl hover:bg-stone-900 transition-all shadow-lg"
+                                >
+                                    閉じる
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
 
         // 結果画面
         const ResultScreen = ({ score, total, onRestart }) => {
@@ -377,8 +533,8 @@
             );
         };
 
-        // 解説モーダル
-        const ExplanationModal = ({ poem, isCorrect, onClose, isLastQuestion }) => {
+        // 解説モーダル（ゲーム中）
+        const ExplanationModal = ({ poem, isCorrect, onClose, isLastQuestion, isLearned }) => {
             useEffect(() => {
                 if (isCorrect) audioManager.playCorrect();
                 else audioManager.playWrong();
@@ -388,7 +544,6 @@
                 <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 md:p-8 animate-pop-in relative overflow-hidden flex flex-col max-h-[90vh]">
                         
-                        {/* 背景装飾 */}
                         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-orange-400 to-red-500"></div>
 
                         <div className="flex flex-col items-center mb-4 flex-shrink-0">
@@ -406,8 +561,6 @@
                         </div>
 
                         <div className="space-y-4 mb-6 bg-stone-50 p-4 rounded-lg border border-stone-200 overflow-y-auto custom-scrollbar flex-grow">
-                            
-                            {/* 上の句追加 */}
                             <div>
                                 <div className="text-xs text-stone-400 font-bold mb-1">上の句</div>
                                 <div className="text-lg md:text-xl font-serif font-bold text-stone-700 border-b border-stone-300 pb-2 mb-2">
@@ -433,6 +586,21 @@
                                     {poem.meaning}
                                 </p>
                             </div>
+
+                            {/* ステータスフィードバック */}
+                            <div className="mt-3 pt-3 border-t border-stone-200">
+                                {isCorrect ? (
+                                    <div className="text-sm text-green-600 font-bold flex items-center gap-2 animate-bounce">
+                                        <Icon name="CheckCircle" className="w-4 h-4" />
+                                        覚えたリストに追加しました！
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-red-500 font-bold flex items-center gap-2">
+                                        <Icon name="Target" className="w-4 h-4" />
+                                        弱点リストに追加（覚えたリストから削除）
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <button
@@ -448,9 +616,7 @@
         };
 
         // ゲーム画面
-        const GameScreen = ({ onFinish }) => {
-            const QUESTIONS_PER_ROUND = 10;
-            
+        const GameScreen = ({ initialQuestions, onFinish, onResultUpdate, modeName, learnedIds }) => {
             const [questions, setQuestions] = useState([]);
             const [currentIndices, setCurrentIndices] = useState(0);
             const [score, setScore] = useState(0);
@@ -459,17 +625,15 @@
             const [isAnswered, setIsAnswered] = useState(false);
             const [showModal, setShowModal] = useState(false);
 
-            // ゲーム初期化
             useEffect(() => {
-                const shuffled = shuffleArray(ALL_POEMS).slice(0, QUESTIONS_PER_ROUND);
-                setQuestions(shuffled);
+                setQuestions(initialQuestions);
                 setCurrentIndices(0);
                 setScore(0);
-            }, []);
+            }, [initialQuestions]);
 
             const currentPoem = questions[currentIndices];
+            const totalQuestions = questions.length;
 
-            // 選択肢生成
             useEffect(() => {
                 if (!currentPoem) return;
                 const distractors = shuffleArray(ALL_POEMS.filter(p => p.id !== currentPoem.id)).slice(0, 3);
@@ -491,13 +655,14 @@
                     setScore(prev => prev + 1);
                 }
                 
-                // 少しだけ遅らせてモーダルを表示（ボタンのクリック感のため）
+                onResultUpdate(currentPoem.id, isCorrect);
+                
                 setTimeout(() => setShowModal(true), 300);
             };
 
             const handleNext = () => {
                 setShowModal(false);
-                if (currentIndices + 1 < QUESTIONS_PER_ROUND) {
+                if (currentIndices + 1 < totalQuestions) {
                     setCurrentIndices(prev => prev + 1);
                 } else {
                     onFinish(score + (selectedOption === currentPoem.id ? 0 : 0));
@@ -514,13 +679,17 @@
                             poem={currentPoem}
                             isCorrect={selectedOption === currentPoem.id}
                             onClose={handleNext}
-                            isLastQuestion={currentIndices + 1 >= QUESTIONS_PER_ROUND}
+                            isLastQuestion={currentIndices + 1 >= totalQuestions}
+                            isLearned={learnedIds.includes(currentPoem.id)}
                         />
                     )}
 
                     {/* ヘッダー情報 */}
                     <div className="flex items-center justify-between text-stone-500 font-serif px-1">
-                        <span className="text-lg">第 {currentIndices + 1} 問</span>
+                        <div className="flex items-center gap-2">
+                             <span className="text-xs bg-stone-200 px-2 py-1 rounded-full">{modeName}</span>
+                             <span className="text-lg">第 {currentIndices + 1} 問 / {totalQuestions}問</span>
+                        </div>
                         <div className="flex items-center gap-2">
                             <span className="text-sm">正解数</span>
                             <span className="text-xl font-bold text-red-700">{score}</span>
@@ -531,16 +700,16 @@
                     <div className="w-full bg-stone-200 rounded-full h-2.5">
                         <div 
                             className="bg-red-700 h-2.5 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(185,28,28,0.3)]"
-                            style={{ width: `${((currentIndices) / QUESTIONS_PER_ROUND) * 100}%` }}
+                            style={{ width: `${((currentIndices) / totalQuestions) * 100}%` }}
                         ></div>
                     </div>
 
                     {/* 上の句カード */}
-                    <div className="bg-gradient-to-br from-stone-50 to-stone-100 border-2 border-stone-300 rounded-xl p-8 md:p-12 shadow-md text-center relative overflow-hidden group">
+                    <div className="bg-gradient-to-br from-stone-50 to-stone-100 border-2 border-stone-300 rounded-xl p-8 md:p-12 shadow-md text-center relative overflow-hidden group min-h-[200px] flex items-center justify-center">
                         <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-stone-300 to-transparent opacity-50"></div>
                         <div className="absolute top-3 right-4 text-xs text-stone-400 writing-vertical tracking-widest opacity-60 select-none font-serif">読み札</div>
                         
-                        <h2 className="text-2xl md:text-4xl font-serif font-bold text-stone-900 leading-loose tracking-wider">
+                        <h2 className="text-2xl md:text-3xl lg:text-4xl font-serif font-bold text-stone-900 leading-loose tracking-wider">
                             <HtmlText html={currentPoem.kami} />
                         </h2>
                     </div>
@@ -548,7 +717,6 @@
                     {/* 選択肢 */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {options.map((option) => {
-                            // モーダルが出るまでは正誤の色を出さない（タップした瞬間だけ反応させる）
                             const isSelected = selectedOption === option.id;
                             let btnClass = "relative overflow-hidden p-4 md:p-6 rounded-xl border-2 text-lg font-serif transition-all duration-200 shadow-sm text-left leading-relaxed ";
                             
@@ -579,25 +747,85 @@
             const [gameState, setGameState] = useState('start');
             const [finalScore, setFinalScore] = useState(0);
             const [isMuted, setIsMuted] = useState(false);
+            const [mistakeIds, setMistakeIds] = useState([]);
+            const [learnedIds, setLearnedIds] = useState([]); // 覚えたリスト
+            const [gameQuestions, setGameQuestions] = useState([]);
+            const [gameMode, setGameMode] = useState('normal'); 
+            const [totalQuestionsInGame, setTotalQuestionsInGame] = useState(10);
+
+            // 初期化時にlocalStorageからデータを読み込む
+            useEffect(() => {
+                const savedMistakes = localStorage.getItem('hyakunin_mistakes');
+                if (savedMistakes) {
+                    try { setMistakeIds(JSON.parse(savedMistakes)); } catch (e) {}
+                }
+                const savedLearned = localStorage.getItem('hyakunin_learned');
+                if (savedLearned) {
+                    try { setLearnedIds(JSON.parse(savedLearned)); } catch (e) {}
+                }
+            }, []);
+
+            // データ更新時に保存
+            useEffect(() => {
+                localStorage.setItem('hyakunin_mistakes', JSON.stringify(mistakeIds));
+            }, [mistakeIds]);
+
+            useEffect(() => {
+                localStorage.setItem('hyakunin_learned', JSON.stringify(learnedIds));
+            }, [learnedIds]);
 
             const toggleMute = () => {
                 const newState = !isMuted;
                 setIsMuted(newState);
                 audioManager.isMuted = newState;
-                audioManager.toggleBgm(!newState && gameState !== 'start');
+                audioManager.toggleBgm(!newState && (gameState === 'playing'));
             };
 
-            const startGame = () => {
-                // 初回のみAudioContextの再開が必要な場合がある
+            const handleResultUpdate = (poemId, isCorrect) => {
+                if (isCorrect) {
+                    // 正解: 弱点から削除、覚えたに追加
+                    setMistakeIds(prev => prev.filter(id => id !== poemId));
+                    setLearnedIds(prev => {
+                        if (!prev.includes(poemId)) return [...prev, poemId];
+                        return prev;
+                    });
+                } else {
+                    // 不正解: 弱点に追加、覚えたから削除
+                    setMistakeIds(prev => {
+                        if (!prev.includes(poemId)) return [...prev, poemId];
+                        return prev;
+                    });
+                    setLearnedIds(prev => prev.filter(id => id !== poemId));
+                }
+            };
+
+            const startNormalGame = () => {
                 audioManager.init();
                 audioManager.toggleBgm(!isMuted);
+                
+                const q = shuffleArray(ALL_POEMS).slice(0, 10);
+                setGameQuestions(q);
+                setTotalQuestionsInGame(10);
+                setGameMode('normal');
+                setGameState('playing');
+            };
+
+            const startWeakMode = () => {
+                audioManager.init();
+                audioManager.toggleBgm(!isMuted);
+
+                const weakPoems = ALL_POEMS.filter(p => mistakeIds.includes(p.id));
+                const q = shuffleArray(weakPoems).slice(0, 10);
+                
+                setGameQuestions(q);
+                setTotalQuestionsInGame(q.length);
+                setGameMode('weak');
                 setGameState('playing');
             };
 
             const finishGame = (score) => {
                 setFinalScore(score);
                 setGameState('result');
-                // BGMは止めない
             };
 
             const restartGame = () => {
@@ -606,7 +834,6 @@
 
             return (
                 <div className="min-h-screen relative overflow-hidden">
-                    {/* 背景パターン */}
                     <div className="absolute inset-0 pointer-events-none opacity-[0.03]" 
                          style={{ backgroundImage: 'radial-gradient(#444 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
                     </div>
@@ -624,9 +851,39 @@
                     </header>
 
                     <main className="container mx-auto px-4 py-8 relative z-10 pb-20">
-                        {gameState === 'start' && <StartScreen onStart={startGame} isMuted={isMuted} toggleMute={toggleMute} />}
-                        {gameState === 'playing' && <GameScreen onFinish={finishGame} />}
-                        {gameState === 'result' && <ResultScreen score={finalScore} total={10} onRestart={restartGame} />}
+                        {gameState === 'start' && (
+                            <StartScreen 
+                                onStartNormal={startNormalGame}
+                                onStartWeak={startWeakMode}
+                                onShowList={() => setGameState('list')}
+                                isMuted={isMuted} 
+                                toggleMute={toggleMute}
+                                mistakeCount={mistakeIds.length}
+                                learnedCount={learnedIds.length}
+                            />
+                        )}
+                        {gameState === 'list' && (
+                            <LearnedListScreen 
+                                learnedIds={learnedIds}
+                                onBack={() => setGameState('start')}
+                            />
+                        )}
+                        {gameState === 'playing' && (
+                            <GameScreen 
+                                initialQuestions={gameQuestions}
+                                onFinish={finishGame}
+                                onResultUpdate={handleResultUpdate}
+                                modeName={gameMode === 'normal' ? '通常モード' : '弱点克服'}
+                                learnedIds={learnedIds}
+                            />
+                        )}
+                        {gameState === 'result' && (
+                            <ResultScreen 
+                                score={finalScore} 
+                                total={totalQuestionsInGame} 
+                                onRestart={restartGame} 
+                            />
+                        )}
                     </main>
 
                     <footer className="absolute bottom-0 w-full text-center py-4 text-stone-400 text-xs font-serif bg-[#f7f3e8]/80 backdrop-blur">
@@ -641,3 +898,5 @@
     </script>
 </body>
 </html>
+
+
